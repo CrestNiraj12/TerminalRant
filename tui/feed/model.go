@@ -100,6 +100,8 @@ type Model struct {
 	spinner       spinner.Model
 	confirmDelete bool // Whether we are in the 'Are you sure?' delete step
 	showDetail    bool // Whether we are in full-post view
+	height        int  // Terminal height
+	startIndex    int  // First visible item in the list (for scrolling)
 }
 
 // New creates a feed model with injected dependencies.
@@ -144,6 +146,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.height = msg.Height
+		return m, nil
+
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
@@ -218,7 +224,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		m.rants = append([]RantItem{newItem}, m.rants...)
-		m.cursor = 0 // Focus the new item
+		m.cursor = 0     // Focus the new item
+		m.startIndex = 0 // Scroll to top
 		return m, nil
 
 	case ResetFeedStateMsg:
@@ -304,6 +311,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
+			// Scroll up if necessary
+			if m.cursor < m.startIndex {
+				m.startIndex = m.cursor
+			}
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
 				break
@@ -311,6 +322,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.confirmDelete = false
 			if m.cursor < len(m.rants)-1 {
 				m.cursor++
+			}
+			// Scroll down if necessary
+			reserved := 9
+			availableHeight := m.height - reserved
+			if availableHeight < 0 {
+				availableHeight = 0
+			}
+			visibleCount := availableHeight / 5
+			if visibleCount < 1 {
+				visibleCount = 1
+			}
+
+			if m.cursor >= m.startIndex+visibleCount {
+				m.startIndex = m.cursor - visibleCount + 1
 			}
 
 		case msg.String() == "enter":

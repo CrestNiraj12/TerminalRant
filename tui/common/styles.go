@@ -14,6 +14,12 @@ var (
 			Foreground(lipgloss.Color("#A6DA95")).
 			Bold(true)
 
+	// TaglineStyle styles the app's tagline.
+	TaglineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555")). // Dimmed grey
+			Italic(true).
+			MarginLeft(1)
+
 	// AuthorStyle styles the rant author name.
 	AuthorStyle = lipgloss.NewStyle().
 			Bold(true).

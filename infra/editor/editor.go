@@ -47,7 +47,7 @@ func (e *EnvEditor) Cmd(content string) (*exec.Cmd, string, error) {
 		return nil, "", fmt.Errorf("writing to temp file: %w", err)
 	}
 
-	cmd := exec.Command(editorCmd, tmpPath)
+	cmd := exec.Command(editorCmd, "+", tmpPath)
 	return cmd, tmpPath, nil
 }
 

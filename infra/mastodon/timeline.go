@@ -77,8 +77,14 @@ func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limi
 
 // stripHTML removes HTML tags and decodes common entities.
 // Good enough for terminal display; not a security boundary.
-var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+var (
+	htmlTagRe   = regexp.MustCompile(`<[^>]*>`)
+	lineBreakRe = regexp.MustCompile(`(?i)</p>|<br\s*/?>`)
+)
 
 func stripHTML(s string) string {
+	// Replace paragraph ends and breaks with newlines
+	s = lineBreakRe.ReplaceAllString(s, "\n")
+	// Strip all remaining tags
 	return htmlTagRe.ReplaceAllString(s, "")
 }
