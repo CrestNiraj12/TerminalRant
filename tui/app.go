@@ -109,11 +109,36 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status = ""
 		content := common.StripHashtag(msg.Rant.Content, a.deps.Hashtag)
 		if msg.UseInline {
-			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, content)
+			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, content, true, false, "")
 		} else {
-			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, content)
+			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, content, true, false, "")
 		}
 		return a, a.compose.Init()
+
+	case feed.ReplyRantMsg:
+		a.active = composeView
+		a.status = ""
+		if msg.UseInline {
+			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Author)
+		} else {
+			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Author)
+		}
+		return a, a.compose.Init()
+
+	case feed.LikeRantMsg:
+		// Optimistic like
+		a.feed, _ = a.feed.Update(msg)
+		return a, func() tea.Msg {
+			err := a.deps.Post.Like(context.Background(), msg.ID)
+			return feed.LikeResultMsg{ID: msg.ID, Err: err}
+		}
+
+	case feed.LikeResultMsg:
+		a.feed, _ = a.feed.Update(msg)
+		if msg.Err != nil {
+			a.status = "Error liking: " + msg.Err.Error()
+		}
+		return a, nil
 
 	case feed.DeleteRantMsg:
 		// Optimistic delete
@@ -157,6 +182,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Content: msg.Content,
 			})
 			a.status = "Updating..."
+		} else if msg.IsReply {
+			// Replies are just new posts for now in terms of optimistic UI
+			// but could be handled specifically if we had a thread view.
+			a.status = "Replying..."
 		} else {
 			a.feed, _ = a.feed.Update(feed.AddOptimisticRantMsg{
 				Content: msg.Content,
@@ -170,6 +199,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var err error
 			if msg.IsEdit {
 				rant, err = a.deps.Post.Edit(context.Background(), msg.RantID, msg.Content, a.deps.Hashtag)
+			} else if msg.IsReply {
+				rant, err = a.deps.Post.Reply(context.Background(), msg.ParentID, msg.Content, a.deps.Hashtag)
 			} else {
 				rant, err = a.deps.Post.Post(context.Background(), msg.Content, a.deps.Hashtag)
 			}
@@ -193,6 +224,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.status = "🔥 Rant updated!"
 			} else {
 				a.status = "🔥 Rant posted!"
+				// Automatically enter detail view for the new rant (post or reply)
+				// We need to wait for the feed to reconcile or just force it.
+				// Actually, the feed model update might have already set the cursor to 0.
+				// Let's send an "enter" key msg to the feed model through its Update.
+				a.feed, _ = a.feed.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			}
 		}
 		return a, nil

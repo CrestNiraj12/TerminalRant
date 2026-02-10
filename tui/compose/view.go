@@ -20,7 +20,13 @@ func (m Model) View() string {
 	case inlineMode:
 		var b strings.Builder
 		b.WriteString(common.AppTitleStyle.Render("🔥 TerminalRant"))
-		b.WriteString("  New Rant\n\n")
+		if m.isReply {
+			b.WriteString(fmt.Sprintf("  Reply to @%s\n\n", m.parentAuthor))
+		} else if m.isEdit {
+			b.WriteString("  Edit Rant\n\n")
+		} else {
+			b.WriteString("  New Rant\n\n")
+		}
 		b.WriteString(m.textarea.View())
 		b.WriteString("\n\n")
 

@@ -4,16 +4,19 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines shared key bindings across all views.
 type KeyMap struct {
-	Quit       key.Binding
-	Refresh    key.Binding
-	NewEditor  key.Binding // p — compose via $EDITOR
-	NewInline  key.Binding // P — compose via inline textarea
-	Edit       key.Binding // e — fast edit own post (buffer)
-	EditInline key.Binding // E — fast edit own post (inline)
-	Delete     key.Binding // d — fast delete own post
-	Up         key.Binding
-	Down       key.Binding
-	Open       key.Binding // o — open in browser
+	Quit        key.Binding
+	Refresh     key.Binding
+	NewEditor   key.Binding // p — compose via $EDITOR
+	NewInline   key.Binding // P — compose via inline textarea
+	Edit        key.Binding // e — fast edit own post (buffer)
+	EditInline  key.Binding // E — fast edit own post (inline)
+	Delete      key.Binding // d — fast delete own post
+	Like        key.Binding // l — like/favorite
+	Reply       key.Binding // r — reply via $EDITOR
+	ReplyInline key.Binding // ctrl+r — reply inline
+	Up          key.Binding
+	Down        key.Binding
+	Open        key.Binding // o — open in browser
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -34,6 +37,18 @@ func DefaultKeyMap() KeyMap {
 		NewInline: key.NewBinding(
 			key.WithKeys("P"),
 			key.WithHelp("P", "rant (inline)"),
+		),
+		Reply: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "reply ($EDITOR)"),
+		),
+		ReplyInline: key.NewBinding(
+			key.WithKeys("C"),
+			key.WithHelp("C", "reply (inline)"),
+		),
+		Like: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "like"),
 		),
 		Edit: key.NewBinding(
 			key.WithKeys("e"),

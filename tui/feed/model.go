@@ -41,6 +41,45 @@ type DeleteResultMsg struct {
 	Err error
 }
 
+// LikeRantMsg is sent when the user wants to like a rant.
+type LikeRantMsg struct {
+	ID string
+}
+
+// LikeResultMsg is sent after a like attempt.
+type LikeResultMsg struct {
+	ID  string
+	Err error
+}
+
+// ReplyRantMsg is sent when the user wants to reply to a rant.
+type ReplyRantMsg struct {
+	Rant      domain.Rant
+	UseInline bool
+}
+
+// ThreadLoadedMsg is sent when a thread (ancestors and replies) is loaded.
+type ThreadLoadedMsg struct {
+	Ancestors   []domain.Rant
+	Descendants []domain.Rant
+}
+
+// ThreadErrorMsg is sent when a thread fetch fails.
+type ThreadErrorMsg struct {
+	Err error
+}
+
+func (m Model) fetchThread(id string) tea.Cmd {
+	timeline := m.timeline
+	return func() tea.Msg {
+		ancestors, descendants, err := timeline.FetchThread(context.Background(), id)
+		if err != nil {
+			return ThreadErrorMsg{Err: err}
+		}
+		return ThreadLoadedMsg{Ancestors: ancestors, Descendants: descendants}
+	}
+}
+
 type ResetFeedStateMsg struct{}
 
 // ResultMsg is a generic success/fail result for creation or update.
@@ -90,18 +129,21 @@ type RantItem struct {
 
 // Model holds the state for the feed (timeline) view.
 type Model struct {
-	timeline      app.TimelineService
-	hashtag       string
-	rants         []RantItem
-	cursor        int
-	loading       bool
-	err           error
-	keys          common.KeyMap
-	spinner       spinner.Model
-	confirmDelete bool // Whether we are in the 'Are you sure?' delete step
-	showDetail    bool // Whether we are in full-post view
-	height        int  // Terminal height
-	startIndex    int  // First visible item in the list (for scrolling)
+	timeline       app.TimelineService
+	hashtag        string
+	rants          []RantItem
+	cursor         int
+	loading        bool
+	err            error
+	keys           common.KeyMap
+	spinner        spinner.Model
+	confirmDelete  bool // Whether we are in the 'Are you sure?' delete step
+	showDetail     bool // Whether we are in full-post view
+	height         int  // Terminal height
+	startIndex     int  // First visible item in the list (for scrolling)
+	ancestors      []domain.Rant
+	replies        []domain.Rant
+	loadingReplies bool
 }
 
 // New creates a feed model with injected dependencies.
@@ -231,6 +273,56 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case ResetFeedStateMsg:
 		m.showDetail = false
 		m.confirmDelete = false
+		m.replies = nil
+		m.ancestors = nil
+		m.loadingReplies = false
+		return m, nil
+
+	case ThreadLoadedMsg:
+		m.replies = msg.Descendants
+		m.ancestors = msg.Ancestors
+		m.loadingReplies = false
+		return m, nil
+
+	case ThreadErrorMsg:
+		m.loadingReplies = false
+		// We could show a specific error for replies, but for now just silence it
+		return m, nil
+
+	case LikeRantMsg:
+		for i, ri := range m.rants {
+			if ri.Rant.ID == msg.ID {
+				if ri.Rant.Liked {
+					ri.Rant.Liked = false
+					ri.Rant.LikesCount--
+				} else {
+					ri.Rant.Liked = true
+					ri.Rant.LikesCount++
+				}
+				m.rants[i] = ri
+				break
+			}
+		}
+		return m, nil
+
+	case LikeResultMsg:
+		if msg.Err != nil {
+			// Rollback or show error
+			for i, ri := range m.rants {
+				if ri.Rant.ID == msg.ID {
+					// Toggle back on error
+					if ri.Rant.Liked {
+						ri.Rant.Liked = false
+						ri.Rant.LikesCount--
+					} else {
+						ri.Rant.Liked = true
+						ri.Rant.LikesCount++
+					}
+					m.rants[i] = ri
+					break
+				}
+			}
+		}
 		return m, nil
 
 	case UpdateOptimisticRantMsg:
@@ -341,6 +433,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case msg.String() == "enter":
 			if len(m.rants) > 0 {
 				m.showDetail = !m.showDetail
+				if m.showDetail {
+					m.loadingReplies = true
+					m.replies = nil
+					return m, m.fetchThread(m.rants[m.cursor].Rant.ID)
+				}
 			}
 			return m, nil
 
@@ -369,6 +466,24 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if r.Rant.IsOwn {
 				return m, func() tea.Msg { return EditRantMsg{Rant: r.Rant, UseInline: true} }
 			}
+
+		case key.Matches(msg, m.keys.Like):
+			if len(m.rants) == 0 {
+				break
+			}
+			return m, func() tea.Msg { return LikeRantMsg{ID: m.rants[m.cursor].Rant.ID} }
+
+		case key.Matches(msg, m.keys.Reply):
+			if len(m.rants) == 0 {
+				break
+			}
+			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.rants[m.cursor].Rant, UseInline: false} }
+
+		case key.Matches(msg, m.keys.ReplyInline):
+			if len(m.rants) == 0 {
+				break
+			}
+			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.rants[m.cursor].Rant, UseInline: true} }
 
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
@@ -403,6 +518,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case msg.String() == "n":
 			if m.confirmDelete {
 				m.confirmDelete = false
+			}
+		case msg.String() == "u":
+			if m.showDetail && len(m.ancestors) > 0 {
+				// Navigate to the immediate parent (last ancestor)
+				parent := m.ancestors[len(m.ancestors)-1]
+				// Find it in our local rants if possible, or just push it?
+				// For now, let's keep it simple and just show it as the "detail"
+				// but we'd need to update the cursor or something.
+				// Better approach: just update the cursor to the parent if it's in the list.
+				for i, ri := range m.rants {
+					if ri.Rant.ID == parent.ID {
+						m.cursor = i
+						m.replies = nil
+						m.ancestors = nil
+						m.loadingReplies = true
+						return m, m.fetchThread(parent.ID)
+					}
+				}
+				// If not in list, we could fetch it and prepend, but that's complex.
+				// Let's at least allow going back to the parent if it's in the ancestors list.
 			}
 		}
 	}

@@ -23,10 +23,12 @@ const (
 
 // DoneMsg is sent when composing is complete (success or cancel).
 type DoneMsg struct {
-	Content string // Empty if cancelled
-	RantID  string // ID of the rant being edited
-	IsEdit  bool
-	Err     error
+	Content  string // Empty if cancelled
+	RantID   string // ID of the rant being edited
+	ParentID string // ID of the rant being replied to
+	IsEdit   bool
+	IsReply  bool
+	Err      error
 }
 
 // editorFinishedMsg is sent after the external editor exits.
@@ -39,17 +41,20 @@ type editorFinishedMsg struct {
 
 // Model holds the state for the compose view.
 type Model struct {
-	mode     mode
-	post     app.PostService
-	editor   *editor.EnvEditor
-	hashtag  string
-	status   string
-	err      error
-	textarea textarea.Model // Only used in inline mode
-	tmpPath  string         // Temp file path for editor mode
-	isEdit   bool
-	rantID   string
-	content  string // Initial content for editing
+	mode         mode
+	post         app.PostService
+	editor       *editor.EnvEditor
+	hashtag      string
+	status       string
+	err          error
+	textarea     textarea.Model // Only used in inline mode
+	tmpPath      string         // Temp file path for editor mode
+	isEdit       bool
+	isReply      bool
+	rantID       string
+	parentID     string
+	parentAuthor string
+	content      string // Initial content for editing
 }
 
 // NewEditor creates a compose model that opens $EDITOR via tea.Exec.
@@ -63,17 +68,24 @@ func NewEditor(post app.PostService, ed *editor.EnvEditor, hashtag string) Model
 	}
 }
 
-// NewEditorWithContent creates a compose model for editing an existing rant.
-func NewEditorWithContent(post app.PostService, ed *editor.EnvEditor, hashtag string, rantID string, content string) Model {
+// NewEditorWithContent creates a compose model for editing or replying to a rant.
+func NewEditorWithContent(post app.PostService, ed *editor.EnvEditor, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string) Model {
+	status := "Opening editor..."
+	if isReply {
+		status = fmt.Sprintf("Replying to %s...", parentAuthor)
+	}
 	return Model{
-		mode:    editorMode,
-		post:    post,
-		editor:  ed,
-		hashtag: hashtag,
-		status:  "Opening editor...",
-		isEdit:  true,
-		rantID:  rantID,
-		content: content,
+		mode:         editorMode,
+		post:         post,
+		editor:       ed,
+		hashtag:      hashtag,
+		status:       status,
+		isEdit:       isEdit,
+		isReply:      isReply,
+		rantID:       rantID,
+		parentID:     rantID, // For replies, rantID is the parent
+		parentAuthor: parentAuthor,
+		content:      content,
 	}
 }
 
@@ -94,22 +106,29 @@ func NewInline(post app.PostService, hashtag string) Model {
 	}
 }
 
-// NewInlineWithContent creates a compose model for editing an existing rant inline.
-func NewInlineWithContent(post app.PostService, hashtag string, rantID string, content string) Model {
+// NewInlineWithContent creates a compose model for editing or replying to a rant inline.
+func NewInlineWithContent(post app.PostService, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string) Model {
 	ta := textarea.New()
-	ta.SetValue(content)
+	if isReply {
+		ta.Placeholder = fmt.Sprintf("Reply to %s...", parentAuthor)
+	} else {
+		ta.SetValue(content)
+	}
 	ta.SetWidth(72)
 	ta.SetHeight(6)
 	ta.Focus()
 
 	return Model{
-		mode:     inlineMode,
-		post:     post,
-		hashtag:  hashtag,
-		textarea: ta,
-		isEdit:   true,
-		rantID:   rantID,
-		content:  content,
+		mode:         inlineMode,
+		post:         post,
+		hashtag:      hashtag,
+		textarea:     ta,
+		isEdit:       isEdit,
+		isReply:      isReply,
+		rantID:       rantID,
+		parentID:     rantID, // For replies, rantID is the parent
+		parentAuthor: parentAuthor,
+		content:      content,
 	}
 }
 
@@ -127,7 +146,7 @@ func (m Model) Init() tea.Cmd {
 // launchEditor prepares the editor command and uses tea.Exec to properly
 // suspend Bubble Tea's raw terminal mode while the editor runs.
 func (m *Model) launchEditor() tea.Cmd {
-	cmd, tmpPath, err := m.editor.Cmd(m.content)
+	cmd, tmpPath, err := m.editor.Cmd(m.content, m.parentAuthor)
 	if err != nil {
 		return func() tea.Msg {
 			return DoneMsg{Err: fmt.Errorf("preparing editor: %w", err)}
@@ -160,10 +179,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		if content == "" || content == m.content {
-			return m, done(DoneMsg{IsEdit: m.isEdit, RantID: m.rantID}) // Cancel
+			return m, done(DoneMsg{IsEdit: m.isEdit, IsReply: m.isReply, RantID: m.rantID, ParentID: m.parentID}) // Cancel
 		}
 
-		return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, RantID: m.rantID})
+		return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, IsReply: m.isReply, RantID: m.rantID, ParentID: m.parentID})
 
 	// --- Inline mode messages ---
 
@@ -179,9 +198,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "ctrl+d":
 			content := m.textarea.Value()
 			if content == "" || content == m.content {
-				return m, done(DoneMsg{IsEdit: m.isEdit, RantID: m.rantID})
+				return m, done(DoneMsg{IsEdit: m.isEdit, IsReply: m.isReply, RantID: m.rantID, ParentID: m.parentID})
 			}
-			return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, RantID: m.rantID})
+			return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, IsReply: m.isReply, RantID: m.rantID, ParentID: m.parentID})
 		}
 
 		// Delegate to textarea for normal typing.

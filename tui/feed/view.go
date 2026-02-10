@@ -72,6 +72,18 @@ func (m Model) View() string {
 			}
 			timestamp := common.TimestampStyle.Render(rant.CreatedAt.Format("Jan 02 15:04"))
 
+			replyHint := ""
+			if rant.InReplyToID != "" && rant.InReplyToID != "<nil>" && rant.InReplyToID != "0" {
+				// We don't have the parent author in the list usually, but it might be in the content?
+				// Actually, we can just show a simpler 'Reply' indicator if we don't have the author.
+				// But let's try to extract it from the content if it starts with @user?
+				// For now, let's just make it a prominent line.
+				replyHint = "\n  " + lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#555555")).
+					Italic(true).
+					Render("⬑ Reply")
+			}
+
 			statusText := ""
 			switch rantItem.Status {
 			case StatusPendingCreate:
@@ -85,21 +97,39 @@ func (m Model) View() string {
 			}
 
 			content := common.StripHashtag(rant.Content, m.hashtag)
+
+			// Metadata: Likes and Replies
+			likeIcon := "♡"
+			likeStyle := common.MetadataStyle
+			if rant.Liked {
+				likeIcon = "♥"
+				likeStyle = common.LikeActiveStyle
+			}
+			meta := fmt.Sprintf("%s %d  ↩ %d",
+				likeStyle.Render(likeIcon), rant.LikesCount, rant.RepliesCount)
+
+			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
 			preview := truncateToTwoLines(content, 70)
-			styledContent := common.ContentStyle.Render(preview)
-
-			entry := fmt.Sprintf("%s%s  %s\n%s", author, statusText, timestamp, styledContent)
-
-			if i == m.cursor {
-				entry = common.SelectedStyle.Render(entry)
-				if m.confirmDelete {
-					entry += "\n" + common.ConfirmStyle.Render("  Delete this rant? (y/n)")
-				}
-			} else {
-				entry = common.UnselectedStyle.Render(entry)
+			previewLines := strings.Split(preview, "\n")
+			var bodyBuilder strings.Builder
+			for _, line := range previewLines {
+				bodyBuilder.WriteString(indicator + common.ContentStyle.Render(line) + "\n")
 			}
 
-			listBuilder.WriteString(entry)
+			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
+			itemContent := fmt.Sprintf("%s%s  %s%s\n%s\n  %s",
+				author, statusText, timestamp, replyHint, body, common.MetadataStyle.Render(meta))
+
+			if i == m.cursor {
+				itemContent = common.SelectedStyle.Render(itemContent)
+				if m.confirmDelete {
+					itemContent += "\n" + common.ConfirmStyle.Render("  Delete this rant? (y/n)")
+				}
+			} else {
+				itemContent = common.UnselectedStyle.Render(itemContent)
+			}
+
+			listBuilder.WriteString(itemContent)
 			listBuilder.WriteString("\n")
 		}
 
@@ -146,7 +176,7 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
 	}
 
-	b.WriteString(common.StatusBarStyle.Render("  p/P: post • e/E: edit • d: delete • r: refresh • j/k: navigate • q: quit"))
+	b.WriteString(m.helpView())
 
 	return b.String()
 }
@@ -184,7 +214,7 @@ func (m Model) renderDetailView() string {
 	postCrumb := crumbStyle.Render(fmt.Sprintf("Post %s", r.ID))
 
 	b.WriteString(title + tagline + "\n")
-	// Use JoinHorizontal to keep it "straight" and avoid "diagonal" breaks
+
 	breadcrumb := lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, postCrumb)
 	b.WriteString(breadcrumb + "\n")
 
@@ -198,12 +228,34 @@ func (m Model) renderDetailView() string {
 
 	var cardContent strings.Builder
 	cardContent.WriteString(common.AuthorStyle.Render(r.Author) + "\n")
-	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n\n")
+	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n")
+
+	// Parent Context inside card
+	if len(m.ancestors) > 0 {
+		parent := m.ancestors[len(m.ancestors)-1]
+		parentIndicator := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555")).
+			Italic(true).
+			Render(fmt.Sprintf("⬑ Replying to @%s", parent.Author))
+		cardContent.WriteString(parentIndicator + "\n")
+	}
+	cardContent.WriteString("\n")
 
 	// Full content (wrapped) - strip hashtag for display
 	displayContent := common.StripHashtag(r.Content, m.hashtag)
 	content := common.ContentStyle.Width(66).Render(displayContent)
-	cardContent.WriteString(content + "\n")
+	cardContent.WriteString(content + "\n\n")
+
+	// Metadata: Likes and Replies
+	likeIcon := "♡"
+	likeStyle := common.MetadataStyle
+	if r.Liked {
+		likeIcon = "♥"
+		likeStyle = common.LikeActiveStyle
+	}
+	meta := fmt.Sprintf("%s Likes: %d  |  ↩ Replies: %d",
+		likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
+	cardContent.WriteString(common.MetadataStyle.Render(meta) + "\n")
 
 	if r.URL != "" {
 		cardContent.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("🔗 URL: "+r.URL) + "\n")
@@ -214,7 +266,64 @@ func (m Model) renderDetailView() string {
 	}
 
 	b.WriteString(cardStyle.Render(cardContent.String()))
-	b.WriteString("\n\n" + common.StatusBarStyle.Render("  o: open • esc/q: back to list"))
+
+	// Replies Section
+	if m.loadingReplies {
+		b.WriteString("\n\n  " + m.spinner.View() + " Loading replies...")
+	} else if len(m.replies) > 0 {
+		b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Replies") + "\n")
+		for _, r := range m.replies {
+			author := common.AuthorStyle.Render(r.Author)
+			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
+			content := common.ContentStyle.Render(common.StripHashtag(r.Content, m.hashtag))
+
+			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
+			replyContent := fmt.Sprintf("  %s %s\n  %s %s", author, timestamp, indicator, content)
+			b.WriteString("\n" + replyContent + "\n")
+		}
+	} else if !m.loadingReplies {
+		// b.WriteString("\n\n  No replies yet.")
+	}
+	b.WriteString("\n\n" + common.StatusBarStyle.Render("  l: like • c/C: reply • o: open • esc/q: back to list"))
 
 	return b.String()
+}
+
+func (m Model) helpView() string {
+	var items []string
+
+	if m.showDetail {
+		items = []string{
+			"esc: back",
+			"l: like",
+			"c/C: reply",
+			"o: open",
+			"q: quit",
+		}
+		if len(m.ancestors) > 0 {
+			items = append(items[:len(items)-1], "u: parent", "q: quit")
+		}
+	} else if len(m.rants) > 0 {
+		items = []string{
+			"j/k: focus",
+			"enter: detail",
+			"p/P: rant",
+			"c/C: reply",
+			"l: like",
+			"r: refresh",
+		}
+		r := m.rants[m.cursor].Rant
+		if r.IsOwn {
+			items = append(items, "e/E: edit", "d: delete")
+		}
+		items = append(items, "q: quit")
+	} else {
+		items = []string{
+			"p/P: rant",
+			"r: refresh",
+			"q: quit",
+		}
+	}
+
+	return common.StatusBarStyle.Render("  " + strings.Join(items, " • "))
 }

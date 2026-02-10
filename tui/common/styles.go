@@ -36,8 +36,9 @@ var (
 	// SelectedStyle highlights the currently selected rant.
 	SelectedStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#FF6600")).
-			Padding(0, 1)
+			BorderForeground(lipgloss.Color("#FF8700")).
+			Padding(1, 1).
+			MarginLeft(2)
 
 	// OwnBadgeStyle highlights posts that belong to the user.
 	OwnBadgeStyle = lipgloss.NewStyle().
@@ -82,4 +83,12 @@ var (
 	SuccessStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A6DA95")).
 			Bold(true)
+
+	// LikeActiveStyle highlights a liked rant.
+	LikeActiveStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ED8796")) // Reddish/Pink
+
+	// MetadataStyle styles secondary info like counts.
+	MetadataStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555"))
 )

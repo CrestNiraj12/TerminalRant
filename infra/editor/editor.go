@@ -29,7 +29,7 @@ TerminalRant: Edit your rant below.
 
 // Cmd prepares an *exec.Cmd for the editor and a temp file path.
 // It writes the provided content (and an instruction comment) to the temp file.
-func (e *EnvEditor) Cmd(content string) (*exec.Cmd, string, error) {
+func (e *EnvEditor) Cmd(content string, parentAuthor string) (*exec.Cmd, string, error) {
 	editorCmd := os.Getenv("EDITOR")
 	if editorCmd == "" {
 		editorCmd = "vi"
@@ -42,7 +42,12 @@ func (e *EnvEditor) Cmd(content string) (*exec.Cmd, string, error) {
 	tmpPath := tmpFile.Name()
 	defer tmpFile.Close()
 
-	if _, err := tmpFile.WriteString(instructionComment + content); err != nil {
+	instruction := instructionComment
+	if parentAuthor != "" {
+		instruction = strings.Replace(instruction, "Edit your rant below.", fmt.Sprintf("Replying to %s", parentAuthor), 1)
+	}
+
+	if _, err := tmpFile.WriteString(instruction + content); err != nil {
 		os.Remove(tmpPath)
 		return nil, "", fmt.Errorf("writing to temp file: %w", err)
 	}
