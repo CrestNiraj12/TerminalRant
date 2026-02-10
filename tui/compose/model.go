@@ -1,14 +1,12 @@
 package compose
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"terminalrant/app"
-	"terminalrant/domain"
 	"terminalrant/infra/editor"
 )
 
@@ -25,21 +23,16 @@ const (
 
 // DoneMsg is sent when composing is complete (success or cancel).
 type DoneMsg struct {
-	Rant   domain.Rant // Zero value if cancelled
-	Err    error
-	IsEdit bool
+	Content string // Empty if cancelled
+	RantID  string // ID of the rant being edited
+	IsEdit  bool
+	Err     error
 }
 
 // editorFinishedMsg is sent after the external editor exits.
 type editorFinishedMsg struct {
 	tmpPath string
 	err     error
-}
-
-// postResultMsg carries the result of posting a rant.
-type postResultMsg struct {
-	rant domain.Rant
-	err  error
 }
 
 // --- Model ---
@@ -163,15 +156,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Read content from temp file.
 		content, err := m.editor.ReadContent(msg.tmpPath)
 		if err != nil {
-			return m, done(DoneMsg{Err: err, IsEdit: m.isEdit})
+			return m, done(DoneMsg{Err: err, IsEdit: m.isEdit, RantID: m.rantID})
 		}
 
 		if content == "" || content == m.content {
-			return m, done(DoneMsg{IsEdit: m.isEdit}) // No changes or empty = cancel.
+			return m, done(DoneMsg{IsEdit: m.isEdit, RantID: m.rantID}) // Cancel
 		}
 
-		m.status = "Posting rant..."
-		return m, m.postRant(content)
+		return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, RantID: m.rantID})
 
 	// --- Inline mode messages ---
 
@@ -187,10 +179,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case "ctrl+d":
 			content := m.textarea.Value()
 			if content == "" || content == m.content {
-				return m, done(DoneMsg{IsEdit: m.isEdit}) // No changes or empty = cancel.
+				return m, done(DoneMsg{IsEdit: m.isEdit, RantID: m.rantID})
 			}
-			m.status = "Posting rant..."
-			return m, m.postRant(content)
+			return m, done(DoneMsg{Content: content, IsEdit: m.isEdit, RantID: m.rantID})
 		}
 
 		// Delegate to textarea for normal typing.
@@ -198,13 +189,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.textarea, cmd = m.textarea.Update(msg)
 		return m, cmd
 
-	// --- Shared messages ---
+		// --- Shared messages ---
 
-	case postResultMsg:
-		if msg.err != nil {
-			return m, done(DoneMsg{Err: msg.err, IsEdit: m.isEdit})
-		}
-		return m, done(DoneMsg{Rant: msg.rant, IsEdit: m.isEdit})
 	}
 
 	// Pass through any remaining messages to textarea in inline mode.
@@ -215,25 +201,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-// postRant fires a background Cmd to post or edit the rant via PostService.
-func (m Model) postRant(content string) tea.Cmd {
-	post := m.post
-	hashtag := m.hashtag
-	isEdit := m.isEdit
-	rantID := m.rantID
-
-	return func() tea.Msg {
-		var rant domain.Rant
-		var err error
-		if isEdit {
-			rant, err = post.Edit(context.Background(), rantID, content, hashtag)
-		} else {
-			rant, err = post.Post(context.Background(), content, hashtag)
-		}
-		return postResultMsg{rant: rant, err: err}
-	}
 }
 
 // done wraps a DoneMsg into a tea.Cmd for immediate delivery.

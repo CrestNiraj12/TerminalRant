@@ -11,9 +11,9 @@ type KeyMap struct {
 	Edit       key.Binding // e — fast edit own post (buffer)
 	EditInline key.Binding // E — fast edit own post (inline)
 	Delete     key.Binding // d — fast delete own post
-	Enter      key.Binding // enter — open action menu
 	Up         key.Binding
 	Down       key.Binding
+	Open       key.Binding // o — open in browser
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -47,10 +47,6 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("d"),
 			key.WithHelp("d", "delete"),
 		),
-		Enter: key.NewBinding(
-			key.WithKeys("enter"),
-			key.WithHelp("enter", "actions"),
-		),
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
 			key.WithHelp("↑/k", "up"),
@@ -58,6 +54,10 @@ func DefaultKeyMap() KeyMap {
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
 			key.WithHelp("↓/j", "down"),
+		),
+		Open: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "open"),
 		),
 	}
 }

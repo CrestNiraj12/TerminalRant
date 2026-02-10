@@ -62,6 +62,8 @@ func (e *EnvEditor) ReadContent(path string) (string, error) {
 	}
 
 	content := string(data)
-	content = strings.TrimPrefix(content, instructionComment)
+	if idx := strings.Index(content, "-->"); idx != -1 {
+		content = content[idx+3:]
+	}
 	return strings.TrimSpace(content), nil
 }

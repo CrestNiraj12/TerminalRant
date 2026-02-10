@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"terminalrant/app"
+	"terminalrant/domain"
 	"terminalrant/infra/editor"
 	"terminalrant/tui/common"
 	"terminalrant/tui/compose"
@@ -74,7 +75,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Global key bindings — handled regardless of active view.
-		if a.active == feedView && key.Matches(msg, a.keys.Quit) {
+		if a.active == feedView && key.Matches(msg, a.keys.Quit) && !a.feed.IsInDetailView() {
 			return a, tea.Quit
 		}
 
@@ -115,19 +116,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.compose.Init()
 
 	case feed.DeleteRantMsg:
-		a.status = "Deleting rant..."
+		// Optimistic delete
+		a.feed, _ = a.feed.Update(feed.DeleteOptimisticRantMsg{ID: msg.ID})
 		return a, func() tea.Msg {
 			err := a.deps.Post.Delete(context.Background(), msg.ID)
-			return feed.DeleteResultMsg{Err: err}
+			return feed.DeleteResultMsg{ID: msg.ID, Err: err}
 		}
 
 	case feed.DeleteResultMsg:
+		a.feed, _ = a.feed.Update(msg)
 		if msg.Err != nil {
 			a.status = "Error deleting: " + msg.Err.Error()
 		} else {
 			a.status = "Rant deleted."
 		}
-		return a, a.feed.Refresh()
+		return a, nil
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -136,18 +139,63 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case compose.DoneMsg:
 		a.active = feedView
+		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{})
 		if msg.Err != nil {
 			a.status = "Error: " + msg.Err.Error()
-		} else if msg.Rant.ID != "" {
+			return a, nil
+		}
+
+		if msg.Content == "" {
+			a.status = "Cancelled."
+			return a, nil
+		}
+
+		// Optimistic Update
+		if msg.IsEdit {
+			a.feed, _ = a.feed.Update(feed.UpdateOptimisticRantMsg{
+				ID:      msg.RantID,
+				Content: msg.Content,
+			})
+			a.status = "Updating..."
+		} else {
+			a.feed, _ = a.feed.Update(feed.AddOptimisticRantMsg{
+				Content: msg.Content,
+			})
+			a.status = "Posting..."
+		}
+
+		// Trigger background API call
+		return a, func() tea.Msg {
+			var rant domain.Rant
+			var err error
+			if msg.IsEdit {
+				rant, err = a.deps.Post.Edit(context.Background(), msg.RantID, msg.Content, a.deps.Hashtag)
+			} else {
+				rant, err = a.deps.Post.Post(context.Background(), msg.Content, a.deps.Hashtag)
+			}
+			// Mark as own since we just performed the action
+			rant.IsOwn = true
+			return feed.ResultMsg{
+				ID:     msg.RantID,
+				Rant:   rant,
+				IsEdit: msg.IsEdit,
+				Err:    err,
+			}
+		}
+
+	case feed.ResultMsg:
+		a.feed, _ = a.feed.Update(msg)
+		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{})
+		if msg.Err != nil {
+			a.status = "Error: " + msg.Err.Error()
+		} else {
 			if msg.IsEdit {
 				a.status = "🔥 Rant updated!"
 			} else {
 				a.status = "🔥 Rant posted!"
 			}
-		} else {
-			a.status = "Cancelled."
 		}
-		return a, a.feed.Refresh()
+		return a, nil
 	}
 
 	// Delegate to the active sub-model.
