@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -38,12 +39,13 @@ const (
 
 // App is the root Bubble Tea model. It routes between sub-views.
 type App struct {
-	deps    Deps
-	active  activeView
-	feed    feed.Model
-	compose compose.Model
-	keys    common.KeyMap
-	status  string // Transient status message (e.g. "Rant posted!")
+	deps        Deps
+	active      activeView
+	feed        feed.Model
+	compose     compose.Model
+	keys        common.KeyMap
+	status      string // Transient status message (e.g. "Rant posted!")
+	confirmQuit bool
 }
 
 // NewApp creates the root model with all dependencies wired.
@@ -98,8 +100,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		if a.confirmQuit {
+			switch msg.String() {
+			case "y", "Y":
+				return a, tea.Quit
+			case "n", "N", "esc", "q":
+				a.confirmQuit = false
+				return a, nil
+			default:
+				return a, nil
+			}
+		}
+
 		if a.active == feedView && key.Matches(msg, a.keys.Quit) && !a.feed.IsInDetailView() && !a.feed.IsDialogOpen() {
-			return a, tea.Quit
+			a.confirmQuit = true
+			return a, nil
 		}
 
 		// View-specific key bindings.
@@ -309,6 +324,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+		localReplyID := ""
 		// Optimistic Update
 		if msg.IsEdit {
 			a.feed, _ = a.feed.Update(feed.UpdateOptimisticRantMsg{
@@ -317,7 +333,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			a.status = "Updating..."
 		} else if msg.IsReply {
+			localReplyID = fmt.Sprintf("local-reply-%d", time.Now().UnixNano())
 			a.feed, _ = a.feed.Update(feed.AddOptimisticReplyMsg{
+				LocalID:  localReplyID,
 				ParentID: msg.ParentID,
 				Content:  msg.Content,
 			})
@@ -342,8 +360,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Mark as own since we just performed the action
 			rant.IsOwn = true
+			resultID := msg.RantID
+			if msg.IsReply {
+				resultID = localReplyID
+			}
 			return feed.ResultMsg{
-				ID:     msg.RantID,
+				ID:     resultID,
 				Rant:   rant,
 				IsEdit: msg.IsEdit,
 				Err:    err,
@@ -430,6 +452,9 @@ func (a App) View() string {
 	// Append transient status if present.
 	if a.status != "" {
 		s += "\n" + common.StatusBarStyle.Render(a.status)
+	}
+	if a.confirmQuit {
+		s = common.ConfirmStyle.Render(" Exit TerminalRant? (y/n) ") + "\n" + s
 	}
 
 	return s

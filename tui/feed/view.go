@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"regexp"
 	"strings"
+	"time"
 
 	"terminalrant/domain"
 	"terminalrant/tui/common"
@@ -509,8 +510,6 @@ func (m Model) helpView() string {
 			"j/k: focus",
 			"enter: open",
 			"l: like",
-			"i: media",
-			"I: open media",
 			"h/H: top/home",
 			"esc/q: back",
 			"?: all keys",
@@ -521,8 +520,6 @@ func (m Model) helpView() string {
 			"enter: detail",
 			"p/P: rant",
 			"l: like",
-			"i: media",
-			"I: open media",
 			"q: quit",
 			"?: all keys",
 		}
@@ -539,7 +536,7 @@ func (m Model) helpView() string {
 		Foreground(lipgloss.Color("#555555")).
 		Italic(true).
 		PaddingTop(1).
-		Render("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12 • g: visit")
+		Render(fmt.Sprintf("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12 • g: visit • © %d CrestNiraj12", time.Now().Year()))
 	return hints + "\n" + creator
 }
 

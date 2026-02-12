@@ -1935,6 +1935,7 @@ func (m *Model) reconcileReplyResult(server domain.Rant) {
 }
 
 type AddOptimisticReplyMsg struct {
+	LocalID  string
 	ParentID string
 	Content  string
 }
