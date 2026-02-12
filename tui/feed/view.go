@@ -15,7 +15,11 @@ func (m Model) View() string {
 
 	// If in detail view, render it exclusively (or as an overlay)
 	if m.showDetail {
-		return m.renderDetailView()
+		base := m.renderDetailView()
+		if m.showAllHints {
+			base += "\n\n" + m.renderKeyDialog()
+		}
+		return base
 	}
 
 	// Title + hashtag badge
@@ -186,7 +190,11 @@ func (m Model) View() string {
 
 	b.WriteString(m.helpView())
 
-	return b.String()
+	base := b.String()
+	if m.showAllHints {
+		base += "\n\n" + m.renderKeyDialog()
+	}
+	return base
 }
 
 // truncateToTwoLines wraps and truncates text to at most 2 lines.
@@ -395,7 +403,7 @@ func (m Model) renderDetailView() string {
 			b.WriteString("\n" + replyContent + "\n")
 		}
 	}
-	b.WriteString("\n\n" + common.StatusBarStyle.Render("  l: like • c/C: reply • r: refresh • u: parent • o: open • h: home • esc/q: back"))
+	b.WriteString("\n\n" + m.helpView())
 
 	return b.String()
 }
@@ -405,39 +413,81 @@ func (m Model) helpView() string {
 
 	if m.showDetail {
 		items = []string{
-			"esc: back",
+			"j/k: focus",
+			"enter: open",
 			"l: like",
-			"c/C: reply",
-			"r: refresh",
-			"o: open",
-			"h: home",
-			"q: quit",
-		}
-		if len(m.ancestors) > 0 {
-			items = append(items[:len(items)-1], "u: parent", "q: quit")
+			"esc/q: back",
+			"?: all keys",
 		}
 	} else if len(m.rants) > 0 {
 		items = []string{
 			"j/k: focus",
 			"enter: detail",
 			"p/P: rant",
-			"c/C: reply",
 			"l: like",
-			"r: refresh",
-			"h: home",
+			"q: quit",
+			"?: all keys",
 		}
-		r := m.rants[m.cursor].Rant
-		if r.IsOwn {
-			items = append(items, "e/E: edit", "d: delete")
-		}
-		items = append(items, "q: quit")
 	} else {
 		items = []string{
 			"p/P: rant",
-			"r: refresh",
 			"q: quit",
+			"?: all keys",
 		}
 	}
 
 	return common.StatusBarStyle.Render("  " + strings.Join(items, " • "))
+}
+
+func (m Model) renderKeyDialog() string {
+	var lines []string
+	if m.showDetail {
+		lines = []string{
+			"j/k or up/down  move focus",
+			"enter           open selected reply thread",
+			"l               like/dislike selected post",
+			"c / C           reply via editor / inline",
+			"u               open parent post",
+			"r               refresh replies",
+			"o               open post URL",
+			"h               jump to feed home",
+			"esc / q         back",
+			"ctrl+c          force quit",
+			"?               toggle this dialog",
+		}
+	} else if len(m.rants) > 0 {
+		lines = []string{
+			"j/k or up/down  move focus",
+			"enter           open detail",
+			"p / P           new rant via editor / inline",
+			"c / C           reply via editor / inline",
+			"l               like/dislike selected post",
+			"r               refresh timeline",
+			"o               open post URL",
+			"h               jump to top",
+			"q               quit",
+			"ctrl+c          force quit",
+			"?               toggle this dialog",
+		}
+		r := m.rants[m.cursor].Rant
+		if r.IsOwn {
+			lines = append(lines, "e / E           edit via editor / inline", "d               delete selected post")
+		}
+	} else {
+		lines = []string{
+			"p / P           new rant via editor / inline",
+			"r               refresh timeline",
+			"q               quit",
+			"ctrl+c          force quit",
+			"?               toggle this dialog",
+		}
+	}
+
+	body := "Keyboard Shortcuts\n\n" + strings.Join(lines, "\n") + "\n\nPress ?, esc, q, or enter to close."
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF8700")).
+		Padding(1, 2).
+		Margin(1, 2).
+		Render(body)
 }

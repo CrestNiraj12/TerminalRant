@@ -5,6 +5,8 @@ import "github.com/charmbracelet/bubbles/key"
 // KeyMap defines shared key bindings across all views.
 type KeyMap struct {
 	Quit        key.Binding
+	ForceQuit   key.Binding // ctrl+c — force quit from any view
+	ToggleHints key.Binding // ? — toggle hidden key hints
 	Refresh     key.Binding
 	NewEditor   key.Binding // p — compose via $EDITOR
 	NewInline   key.Binding // P — compose via inline textarea
@@ -24,8 +26,16 @@ type KeyMap struct {
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Quit: key.NewBinding(
-			key.WithKeys("q", "ctrl+c"),
+			key.WithKeys("q"),
 			key.WithHelp("q", "quit"),
+		),
+		ForceQuit: key.NewBinding(
+			key.WithKeys("ctrl+c"),
+			key.WithHelp("ctrl+c", "force quit"),
+		),
+		ToggleHints: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "show/hide all keys"),
 		),
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),

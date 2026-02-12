@@ -43,7 +43,8 @@ type DeleteResultMsg struct {
 
 // LikeRantMsg is sent when the user wants to like a rant.
 type LikeRantMsg struct {
-	ID string
+	ID       string
+	WasLiked bool
 }
 
 // LikeResultMsg is sent after a like attempt.
@@ -157,6 +158,7 @@ type Model struct {
 	focusedRant    *domain.Rant
 	threadCache    map[string]threadData
 	viewStack      []*domain.Rant // To support going back in deep threading
+	showAllHints   bool
 }
 
 // New creates a feed model with injected dependencies.
@@ -307,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Ignore stale async responses for previously focused posts.
-		if msg.ID != m.getSelectedRantID() {
+		if msg.ID != m.currentThreadRootID() {
 			return m, nil
 		}
 
@@ -317,7 +319,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case ThreadErrorMsg:
-		if msg.ID != m.getSelectedRantID() {
+		if msg.ID != m.currentThreadRootID() {
 			return m, nil
 		}
 		m.loadingReplies = false
@@ -351,6 +353,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				break
 			}
 		}
+		m.toggleLikeInThreadCache(msg.ID)
 		return m, nil
 
 	case LikeResultMsg:
@@ -384,6 +387,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					break
 				}
 			}
+			m.toggleLikeInThreadCache(msg.ID)
 		}
 		return m, nil
 
@@ -459,10 +463,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.showAllHints {
+			if key.Matches(msg, m.keys.ToggleHints) || msg.String() == "esc" || msg.String() == "q" || msg.String() == "enter" {
+				m.showAllHints = false
+			}
+			return m, nil
+		}
+
 		switch {
+		case key.Matches(msg, m.keys.ToggleHints):
+			m.showAllHints = true
+			return m, nil
+
 		case key.Matches(msg, m.keys.Refresh):
 			if m.showDetail {
-				id := m.getSelectedRantID()
+				id := m.currentThreadRootID()
 				delete(m.threadCache, id)
 				m.replies = nil
 				m.ancestors = nil
@@ -577,7 +592,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if len(m.rants) == 0 {
 				break
 			}
-			return m, func() tea.Msg { return LikeRantMsg{ID: m.getSelectedRantID()} }
+			selected := m.getSelectedRant()
+			return m, func() tea.Msg {
+				return LikeRantMsg{
+					ID:       selected.ID,
+					WasLiked: selected.Liked,
+				}
+			}
 
 		case key.Matches(msg, m.keys.Reply):
 			if len(m.rants) == 0 {
@@ -733,6 +754,16 @@ func (m Model) getSelectedRantID() string {
 	return m.getSelectedRant().ID
 }
 
+func (m Model) currentThreadRootID() string {
+	if m.focusedRant != nil {
+		return m.focusedRant.ID
+	}
+	if len(m.rants) == 0 {
+		return ""
+	}
+	return m.rants[m.cursor].Rant.ID
+}
+
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {
 	if data, ok := m.threadCache[id]; ok {
 		return func() tea.Msg {
@@ -766,6 +797,39 @@ func (m Model) findRantByID(id string) (domain.Rant, bool) {
 		return *m.focusedRant, true
 	}
 	return domain.Rant{}, false
+}
+
+func (m *Model) toggleLikeInThreadCache(id string) {
+	for key, data := range m.threadCache {
+		updated := false
+		for i := range data.Ancestors {
+			if data.Ancestors[i].ID == id {
+				if data.Ancestors[i].Liked {
+					data.Ancestors[i].Liked = false
+					data.Ancestors[i].LikesCount--
+				} else {
+					data.Ancestors[i].Liked = true
+					data.Ancestors[i].LikesCount++
+				}
+				updated = true
+			}
+		}
+		for i := range data.Descendants {
+			if data.Descendants[i].ID == id {
+				if data.Descendants[i].Liked {
+					data.Descendants[i].Liked = false
+					data.Descendants[i].LikesCount--
+				} else {
+					data.Descendants[i].Liked = true
+					data.Descendants[i].LikesCount++
+				}
+				updated = true
+			}
+		}
+		if updated {
+			m.threadCache[key] = data
+		}
+	}
 }
 
 // ... Loading, Err, Cursor unchanged ...

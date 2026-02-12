@@ -86,6 +86,15 @@ func (s *postService) Like(_ context.Context, id string) error {
 	return nil
 }
 
+func (s *postService) Unlike(_ context.Context, id string) error {
+	path := fmt.Sprintf("/api/v1/statuses/%s/unfavourite", id)
+	_, err := s.client.Post(path, nil)
+	if err != nil {
+		return fmt.Errorf("unliking rant: %w", err)
+	}
+	return nil
+}
+
 func (s *postService) Reply(_ context.Context, parentID string, content string, hashtag string) (domain.Rant, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {

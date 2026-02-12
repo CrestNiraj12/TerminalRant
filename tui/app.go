@@ -76,6 +76,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Global key bindings — handled regardless of active view.
+		if key.Matches(msg, a.keys.ForceQuit) {
+			return a, tea.Quit
+		}
+
 		if a.active == feedView && key.Matches(msg, a.keys.Quit) && !a.feed.IsInDetailView() {
 			return a, tea.Quit
 		}
@@ -136,7 +140,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Optimistic like
 		a.feed, _ = a.feed.Update(msg)
 		return a, func() tea.Msg {
-			err := a.deps.Post.Like(context.Background(), msg.ID)
+			var err error
+			if msg.WasLiked {
+				err = a.deps.Post.Unlike(context.Background(), msg.ID)
+			} else {
+				err = a.deps.Post.Like(context.Background(), msg.ID)
+			}
 			return feed.LikeResultMsg{ID: msg.ID, Err: err}
 		}
 

@@ -20,6 +20,9 @@ type PostService interface {
 	// Like toggles the favorite status of a rant.
 	Like(ctx context.Context, id string) error
 
+	// Unlike removes the favorite status of a rant.
+	Unlike(ctx context.Context, id string) error
+
 	// Reply publishes a new rant as a reply to another.
 	Reply(ctx context.Context, parentID string, content string, hashtag string) (domain.Rant, error)
 }
