@@ -26,22 +26,26 @@ const (
 
 // RantsLoadedMsg is sent when the timeline fetch completes successfully.
 type RantsLoadedMsg struct {
-	Rants []domain.Rant
+	Rants    []domain.Rant
+	QueryKey string
 }
 
 // RantsErrorMsg is sent when the timeline fetch fails.
 type RantsErrorMsg struct {
-	Err error
+	Err      error
+	QueryKey string
 }
 
 // RantsPageLoadedMsg is sent when an older feed page is loaded.
 type RantsPageLoadedMsg struct {
-	Rants []domain.Rant
+	Rants    []domain.Rant
+	QueryKey string
 }
 
 // RantsPageErrorMsg is sent when loading an older feed page fails.
 type RantsPageErrorMsg struct {
-	Err error
+	Err      error
+	QueryKey string
 }
 
 type BlockUserMsg struct {
@@ -320,6 +324,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, cmd
 
 	case RantsLoadedMsg:
+		if msg.QueryKey != m.currentFeedQueryKey() {
+			return m, nil
+		}
 		// Reconciliation: Merge remote results with inflight optimistic items.
 		newRants := make([]RantItem, len(msg.Rants))
 		for i, r := range msg.Rants {
@@ -383,12 +390,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case RantsErrorMsg:
+		if msg.QueryKey != m.currentFeedQueryKey() {
+			return m, nil
+		}
 		m.loading = false
 		m.loadingMore = false
 		m.err = msg.Err
 		return m, nil
 
 	case RantsPageLoadedMsg:
+		if msg.QueryKey != m.currentFeedQueryKey() {
+			return m, nil
+		}
 		m.loadingMore = false
 		m.err = nil
 		if len(msg.Rants) == 0 {
@@ -427,6 +440,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case RantsPageErrorMsg:
+		if msg.QueryKey != m.currentFeedQueryKey() {
+			return m, nil
+		}
 		m.loadingMore = false
 		m.err = msg.Err
 		return m, nil
@@ -1257,6 +1273,7 @@ func (m Model) fetchRants() tea.Cmd {
 	hashtag := m.hashtag
 	defaultHashtag := m.defaultHashtag
 	source := m.feedSource
+	queryKey := m.currentFeedQueryKey()
 	return func() tea.Msg {
 		var (
 			rants []domain.Rant
@@ -1273,9 +1290,9 @@ func (m Model) fetchRants() tea.Cmd {
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, "")
 		}
 		if err != nil {
-			return RantsErrorMsg{Err: err}
+			return RantsErrorMsg{Err: err, QueryKey: queryKey}
 		}
-		return RantsLoadedMsg{Rants: rants}
+		return RantsLoadedMsg{Rants: rants, QueryKey: queryKey}
 	}
 }
 
@@ -1302,6 +1319,7 @@ func (m Model) fetchOlderRants() tea.Cmd {
 	defaultHashtag := m.defaultHashtag
 	source := m.feedSource
 	maxID := m.oldestFeedID
+	queryKey := m.currentFeedQueryKey()
 	return func() tea.Msg {
 		var (
 			rants []domain.Rant
@@ -1318,9 +1336,9 @@ func (m Model) fetchOlderRants() tea.Cmd {
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, maxID)
 		}
 		if err != nil {
-			return RantsPageErrorMsg{Err: err}
+			return RantsPageErrorMsg{Err: err, QueryKey: queryKey}
 		}
-		return RantsPageLoadedMsg{Rants: rants}
+		return RantsPageLoadedMsg{Rants: rants, QueryKey: queryKey}
 	}
 }
 
@@ -1424,6 +1442,9 @@ func (m *Model) ensureFeedCursorVisible() {
 
 func (m Model) feedItemRenderedLines(r domain.Rant) int {
 	content, tags := splitContentAndTags(r.Content)
+	if strings.TrimSpace(content) == "" && len(r.Media) > 0 {
+		content = "(media post)"
+	}
 	preview := truncateToTwoLines(content, 70)
 	previewLines := len(strings.Split(preview, "\n"))
 	if previewLines < 1 {
@@ -1434,6 +1455,9 @@ func (m Model) feedItemRenderedLines(r domain.Rant) int {
 	// Optional tag row with top/bottom padding.
 	if len(tags) > 0 {
 		lines += 3
+	}
+	if len(r.Media) > 0 {
+		lines += 1
 	}
 	// Rounded border top+bottom and one spacer line between cards.
 	return lines + 3

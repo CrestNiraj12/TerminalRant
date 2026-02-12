@@ -18,6 +18,9 @@ post, reply, edit, and moderate your feed without leaving the terminal.
   - Change custom hashtag with `H`
   - Hashtags rendered as small capsules in feed/detail
   - Feed shows compact tags with `+N more`, detail shows all tags
+- Media metadata rendering:
+  - Feed shows compact media hint (image/video/audio counts + optional alt snippet)
+  - Detail shows full media list with type, size (if available), alt text, and URL
 - Post creation and replies:
   - Compose with `$EDITOR` (`p` / `c`) or inline composer (`P` / `C`)
   - Optimistic posting/reply updates

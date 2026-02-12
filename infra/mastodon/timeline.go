@@ -29,21 +29,36 @@ func NewTimelineService(client *Client, currentAccountID string) *timelineServic
 
 // mastodonStatus is the subset of Mastodon's Status entity we care about.
 type mastodonStatus struct {
-	ID              string          `json:"id"`
-	Content         string          `json:"content"` // HTML
-	CreatedAt       string          `json:"created_at"`
-	URL             string          `json:"url"`
-	Account         mastodonAccount `json:"account"`
-	Favourited      bool            `json:"favourited"`
-	FavouritesCount int             `json:"favourites_count"`
-	RepliesCount    int             `json:"replies_count"`
-	InReplyToID     interface{}     `json:"in_reply_to_id"` // Can be string or null
+	ID               string                    `json:"id"`
+	Content          string                    `json:"content"` // HTML
+	CreatedAt        string                    `json:"created_at"`
+	URL              string                    `json:"url"`
+	Account          mastodonAccount           `json:"account"`
+	Favourited       bool                      `json:"favourited"`
+	FavouritesCount  int                       `json:"favourites_count"`
+	RepliesCount     int                       `json:"replies_count"`
+	InReplyToID      interface{}               `json:"in_reply_to_id"` // Can be string or null
+	MediaAttachments []mastodonMediaAttachment `json:"media_attachments"`
 }
 
 type mastodonAccount struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Acct        string `json:"acct"`
+}
+
+type mastodonMediaAttachment struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	URL         string `json:"url"`
+	PreviewURL  string `json:"preview_url"`
+	Description string `json:"description"`
+	Meta        struct {
+		Original struct {
+			Width  float64 `json:"width"`
+			Height float64 `json:"height"`
+		} `json:"original"`
+	} `json:"meta"`
 }
 
 func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limit int) ([]domain.Rant, error) {
@@ -139,6 +154,7 @@ func (s *timelineService) fetchTimelinePath(path string) ([]domain.Rant, error) 
 			LikesCount:   st.FavouritesCount,
 			RepliesCount: st.RepliesCount,
 			InReplyToID:  inReplyToID,
+			Media:        mapMediaAttachments(st.MediaAttachments),
 		})
 	}
 
@@ -197,9 +213,29 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 			LikesCount:   st.FavouritesCount,
 			RepliesCount: st.RepliesCount,
 			InReplyToID:  inReplyToID,
+			Media:        mapMediaAttachments(st.MediaAttachments),
 		})
 	}
 	return rants
+}
+
+func mapMediaAttachments(in []mastodonMediaAttachment) []domain.MediaAttachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]domain.MediaAttachment, 0, len(in))
+	for _, m := range in {
+		out = append(out, domain.MediaAttachment{
+			ID:          sanitizeForTerminal(m.ID),
+			Type:        sanitizeForTerminal(m.Type),
+			URL:         sanitizeForTerminal(m.URL),
+			PreviewURL:  sanitizeForTerminal(m.PreviewURL),
+			Description: sanitizeForTerminal(strings.TrimSpace(m.Description)),
+			Width:       int(m.Meta.Original.Width),
+			Height:      int(m.Meta.Original.Height),
+		})
+	}
+	return out
 }
 
 // stripHTML removes HTML tags and decodes common entities.

@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"terminalrant/domain"
 	"terminalrant/tui/common"
 
 	"github.com/charmbracelet/lipgloss"
@@ -85,6 +86,9 @@ func (m Model) View() string {
 			}
 
 			content, tags := splitContentAndTags(rant.Content)
+			if strings.TrimSpace(content) == "" && len(rant.Media) > 0 {
+				content = "(media post)"
+			}
 
 			// Metadata: Likes and Replies
 			likeIcon := "♡"
@@ -106,11 +110,15 @@ func (m Model) View() string {
 
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
 			tagLine := renderCompactTags(tags, 2)
+			mediaLine := renderMediaCompact(rant.Media)
 			itemContent := fmt.Sprintf("%s%s %s  %s%s\n%s\n%s",
 				author, statusText, hiddenText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
 			if tagLine != "" {
 				itemContent = fmt.Sprintf("%s%s %s  %s%s\n%s\n\n%s\n\n%s",
 					author, statusText, hiddenText, timestamp, replyIndicator, body, tagLine, common.MetadataStyle.Render(meta))
+			}
+			if mediaLine != "" {
+				itemContent = fmt.Sprintf("%s\n%s", itemContent, mediaLine)
 			}
 
 			itemBase := lipgloss.NewStyle().
@@ -288,6 +296,9 @@ func (m Model) renderDetailView() string {
 
 	// Full content (wrapped) - strip hashtag for display
 	displayContent, tags := splitContentAndTags(r.Content)
+	if strings.TrimSpace(displayContent) == "" && len(r.Media) > 0 {
+		displayContent = "(media post)"
+	}
 	content := common.ContentStyle.Width(66).Render(displayContent)
 	cardContent.WriteString(content + "\n\n")
 	if len(tags) > 0 {
@@ -314,6 +325,9 @@ func (m Model) renderDetailView() string {
 	meta := fmt.Sprintf("%s Likes: %d  |  ↩ Replies: %d",
 		likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
 	cardContent.WriteString(common.MetadataStyle.Render(meta) + "\n")
+	if len(r.Media) > 0 {
+		cardContent.WriteString("\n" + renderMediaDetail(r.Media) + "\n")
+	}
 
 	if r.URL != "" {
 		cardContent.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("🔗 URL: "+r.URL) + "\n")
@@ -357,6 +371,9 @@ func (m Model) renderDetailView() string {
 	if len(m.ancestors) > 0 {
 		parent := m.ancestors[len(m.ancestors)-1]
 		parentContent, _ := splitContentAndTags(parent.Content)
+		if strings.TrimSpace(parentContent) == "" && len(parent.Media) > 0 {
+			parentContent = "(media post)"
+		}
 		parentSummary := truncateToTwoLines(parentContent, 66)
 
 		parentCard := lipgloss.NewStyle().
@@ -398,6 +415,9 @@ func (m Model) renderDetailView() string {
 			author := common.AuthorStyle.Render("@" + r.Username)
 			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
 			replyContentClean, _ := splitContentAndTags(r.Content)
+			if strings.TrimSpace(replyContentClean) == "" && len(r.Media) > 0 {
+				replyContentClean = "(media post)"
+			}
 			contentLines := strings.Split(truncateToTwoLines(replyContentClean, 56), "\n")
 
 			indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
@@ -734,4 +754,88 @@ func renderAllTags(tags []string) string {
 		parts = append(parts, capStyle.Render(t))
 	}
 	return strings.Join(parts, " ")
+}
+
+func renderMediaCompact(media []domain.MediaAttachment) string {
+	if len(media) == 0 {
+		return ""
+	}
+	imageCount := 0
+	videoCount := 0
+	audioCount := 0
+	otherCount := 0
+	for _, m := range media {
+		switch strings.ToLower(strings.TrimSpace(m.Type)) {
+		case "image":
+			imageCount++
+		case "video", "gifv":
+			videoCount++
+		case "audio":
+			audioCount++
+		default:
+			otherCount++
+		}
+	}
+	parts := make([]string, 0, 4)
+	if imageCount > 0 {
+		parts = append(parts, fmt.Sprintf("🖼 %d", imageCount))
+	}
+	if videoCount > 0 {
+		parts = append(parts, fmt.Sprintf("🎬 %d", videoCount))
+	}
+	if audioCount > 0 {
+		parts = append(parts, fmt.Sprintf("🔊 %d", audioCount))
+	}
+	if otherCount > 0 {
+		parts = append(parts, fmt.Sprintf("📎 %d", otherCount))
+	}
+	line := strings.Join(parts, "  ")
+	firstAlt := ""
+	for _, m := range media {
+		if strings.TrimSpace(m.Description) != "" {
+			firstAlt = m.Description
+			break
+		}
+	}
+	if firstAlt != "" {
+		r := []rune(firstAlt)
+		if len(r) > 40 {
+			firstAlt = string(r[:40]) + "..."
+		}
+		line += "  alt: " + firstAlt
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6FA8DC")).
+		Faint(true).
+		Render(line)
+}
+
+func renderMediaDetail(media []domain.MediaAttachment) string {
+	if len(media) == 0 {
+		return ""
+	}
+	title := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6FA8DC")).
+		Bold(true).
+		Render(fmt.Sprintf("Media (%d)", len(media)))
+	var b strings.Builder
+	b.WriteString(title + "\n")
+	row := lipgloss.NewStyle().Foreground(lipgloss.Color("#7A7A7A"))
+	for i, m := range media {
+		entry := fmt.Sprintf("  %d. %s", i+1, strings.ToLower(strings.TrimSpace(m.Type)))
+		if m.Width > 0 && m.Height > 0 {
+			entry += fmt.Sprintf(" %dx%d", m.Width, m.Height)
+		}
+		if strings.TrimSpace(m.Description) != "" {
+			entry += " — " + m.Description
+		}
+		if m.URL != "" {
+			entry += " [" + m.URL + "]"
+		}
+		b.WriteString(row.Render(entry))
+		if i < len(media)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }

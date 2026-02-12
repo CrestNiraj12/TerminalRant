@@ -2,6 +2,16 @@ package domain
 
 import "time"
 
+type MediaAttachment struct {
+	ID          string
+	Type        string // image, video, gifv, audio, unknown
+	URL         string
+	PreviewURL  string
+	Description string
+	Width       int
+	Height      int
+}
+
 // Rant represents a single developer rant from the timeline.
 type Rant struct {
 	ID           string
@@ -16,4 +26,5 @@ type Rant struct {
 	LikesCount   int
 	RepliesCount int
 	InReplyToID  string
+	Media        []MediaAttachment
 }

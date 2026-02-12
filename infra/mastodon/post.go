@@ -144,5 +144,6 @@ func (s *postService) parseStatus(data []byte) (domain.Rant, error) {
 		LikesCount:   st.FavouritesCount,
 		RepliesCount: st.RepliesCount,
 		InReplyToID:  fmt.Sprintf("%v", st.InReplyToID),
+		Media:        mapMediaAttachments(st.MediaAttachments),
 	}, nil
 }
