@@ -273,6 +273,7 @@ type Model struct {
 	showMediaPreview bool
 	mediaPreview     map[string]string
 	mediaLoading     map[string]bool
+	navDir           int // -1 up, +1 down for feed edge-scroll behavior
 }
 
 // New creates a feed model with injected dependencies.
@@ -290,17 +291,17 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 	}
 
 	return Model{
-		timeline:       timeline,
-		defaultHashtag: "terminalrant",
-		hashtag:        tag,
-		feedSource:     source,
-		keys:           common.DefaultKeyMap(),
-		spinner:        s,
-		loading:        true,
-		hasMoreFeed:    true,
-		threadCache:    make(map[string]threadData),
-		hiddenIDs:      make(map[string]bool),
-		hiddenAuthors:  make(map[string]bool),
+		timeline:         timeline,
+		defaultHashtag:   "terminalrant",
+		hashtag:          tag,
+		feedSource:       source,
+		keys:             common.DefaultKeyMap(),
+		spinner:          s,
+		loading:          true,
+		hasMoreFeed:      true,
+		threadCache:      make(map[string]threadData),
+		hiddenIDs:        make(map[string]bool),
+		hiddenAuthors:    make(map[string]bool),
 		showMediaPreview: true,
 		mediaPreview:     make(map[string]string),
 		mediaLoading:     make(map[string]bool),
@@ -407,7 +408,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cursor = 0
 		}
 		m.ensureFeedCursorVisible()
-		return m, nil
+		return m, m.ensureMediaPreviewCmd()
 
 	case RantsErrorMsg:
 		if msg.QueryKey != m.currentFeedQueryKey() {
@@ -532,13 +533,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.ancestors = msg.Ancestors
 		m.loadingReplies = false
 		m.ensureDetailCursorVisible()
-		return m, nil
+		return m, m.ensureMediaPreviewCmd()
 
 	case ThreadErrorMsg:
 		if msg.ID != m.currentThreadRootID() {
 			return m, nil
 		}
 		m.loadingReplies = false
+		return m, nil
+
+	case MediaPreviewLoadedMsg:
+		delete(m.mediaLoading, msg.URL)
+		if msg.Err != nil {
+			m.mediaPreview[msg.URL] = ""
+			return m, nil
+		}
+		m.mediaPreview[msg.URL] = msg.Preview
 		return m, nil
 
 	case HideAuthorPostsMsg:
@@ -855,6 +865,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.showAllHints = true
 			return m, nil
 
+		case msg.String() == "i":
+			m.showMediaPreview = !m.showMediaPreview
+			if m.showMediaPreview {
+				return m, m.ensureMediaPreviewCmd()
+			}
+			return m, nil
+
+		case msg.String() == "I":
+			r := m.getSelectedRant()
+			if mediaURL := firstMediaOpenURL(r.Media); mediaURL != "" {
+				return m, openURL(mediaURL)
+			}
+			m.pagingNotice = "No media on selected post."
+			return m, nil
+
 		case key.Matches(msg, m.keys.SwitchFeed):
 			if m.showDetail {
 				m.pagingNotice = "Exit detail view to switch tabs."
@@ -968,13 +993,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if m.detailScrollLine > 0 {
 					m.detailScrollLine--
 				}
-				return m, nil
+				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
+			m.navDir = -1
 			m.moveCursorVisible(-1)
-			m.ensureFeedCursorVisible()
+			return m, m.ensureMediaPreviewCmd()
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
+				gate := m.detailReplyGate()
+				if m.detailCursor == 0 && m.detailScrollLine < gate {
+					m.detailScrollLine++
+					return m, m.ensureMediaPreviewCmd()
+				}
 				if m.detailCursor < len(m.replies) {
 					m.detailCursor++
 				}
@@ -982,29 +1013,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.loadMoreReplies()
 				}
 				m.detailScrollLine++
-				return m, nil
+				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
+			m.navDir = 1
 			m.moveCursorVisible(1)
-			// Scroll down if necessary
-			reserved := 9
-			availableHeight := m.height - reserved
-			if availableHeight < 0 {
-				availableHeight = 0
-			}
-			visibleCount := availableHeight / 5
-			if visibleCount < 1 {
-				visibleCount = 1
-			}
-
-			if m.cursor >= m.startIndex+visibleCount {
-				m.startIndex = m.cursor - visibleCount + 1
-			}
-			m.ensureFeedCursorVisible()
 			if m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
 				m.loadingMore = true
-				return m, m.fetchOlderRants()
+				return m, tea.Batch(m.fetchOlderRants(), m.ensureMediaPreviewCmd())
 			}
+			return m, m.ensureMediaPreviewCmd()
 
 		case key.Matches(msg, m.keys.Home):
 			m.showDetail = false
@@ -1330,6 +1348,105 @@ func (m *Model) loadMoreReplies() {
 	m.ensureDetailCursorVisible()
 }
 
+func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
+	if !m.showMediaPreview {
+		return nil
+	}
+	r := m.getSelectedRant()
+	url := firstImagePreviewURL(r.Media)
+	if url == "" {
+		return nil
+	}
+	if _, ok := m.mediaPreview[url]; ok {
+		return nil
+	}
+	if m.mediaLoading[url] {
+		return nil
+	}
+	m.mediaLoading[url] = true
+	return fetchMediaPreview(url)
+}
+
+func firstImagePreviewURL(media []domain.MediaAttachment) string {
+	for _, m := range media {
+		t := strings.ToLower(strings.TrimSpace(m.Type))
+		if t != "image" && t != "gifv" {
+			continue
+		}
+		if strings.TrimSpace(m.PreviewURL) != "" {
+			return m.PreviewURL
+		}
+		if strings.TrimSpace(m.URL) != "" {
+			return m.URL
+		}
+	}
+	return ""
+}
+
+func firstMediaOpenURL(media []domain.MediaAttachment) string {
+	for _, m := range media {
+		if strings.TrimSpace(m.URL) != "" {
+			return m.URL
+		}
+		if strings.TrimSpace(m.PreviewURL) != "" {
+			return m.PreviewURL
+		}
+	}
+	return ""
+}
+
+func fetchMediaPreview(url string) tea.Cmd {
+	return func() tea.Msg {
+		client := &http.Client{Timeout: 6 * time.Second}
+		resp, err := client.Get(url)
+		if err != nil {
+			return MediaPreviewLoadedMsg{URL: url, Err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return MediaPreviewLoadedMsg{URL: url, Err: fmt.Errorf("preview status %d", resp.StatusCode)}
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+		if err != nil {
+			return MediaPreviewLoadedMsg{URL: url, Err: err}
+		}
+		img, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return MediaPreviewLoadedMsg{URL: url, Err: err}
+		}
+		return MediaPreviewLoadedMsg{
+			URL:     url,
+			Preview: renderANSIThumbnail(img, 24, 10),
+		}
+	}
+}
+
+func renderANSIThumbnail(img image.Image, w, h int) string {
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return ""
+	}
+	if w < 4 {
+		w = 4
+	}
+	if h < 2 {
+		h = 2
+	}
+	var out strings.Builder
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			sx := b.Min.X + x*b.Dx()/w
+			sy := b.Min.Y + y*b.Dy()/h
+			c := color.NRGBAModel.Convert(img.At(sx, sy)).(color.NRGBA)
+			out.WriteString(fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B))
+		}
+		if y < h-1 {
+			out.WriteByte('\n')
+		}
+	}
+	return out.String()
+}
+
 func (m Model) fetchOlderRants() tea.Cmd {
 	if m.loading || !m.hasMoreFeed || m.oldestFeedID == "" {
 		return nil
@@ -1519,6 +1636,56 @@ func (m Model) currentFeedQueryKey() string {
 	default:
 		return "tag:" + strings.ToLower(strings.TrimSpace(m.defaultHashtag))
 	}
+}
+
+func (m Model) detailReplyGate() int {
+	r := m.getSelectedRant()
+	if m.focusedRant != nil {
+		r = *m.focusedRant
+	}
+	content, tags := splitContentAndTags(r.Content)
+	if strings.TrimSpace(content) == "" && len(r.Media) > 0 {
+		content = "(media post)"
+	}
+	contentLines := estimateWrappedLines(content, 66)
+	mainLines := 18 + contentLines
+	if len(tags) > 0 {
+		mainLines += 3
+	}
+	if len(r.Media) > 0 {
+		mainLines += 4
+	}
+	if len(m.ancestors) > 0 {
+		mainLines += 6
+	}
+	viewHeight := m.height - 2
+	if viewHeight < 8 {
+		viewHeight = 8
+	}
+	gate := mainLines - (viewHeight - 4)
+	if gate < 0 {
+		gate = 0
+	}
+	return gate
+}
+
+func estimateWrappedLines(text string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	lines := 0
+	for _, ln := range strings.Split(text, "\n") {
+		r := []rune(ln)
+		if len(r) == 0 {
+			lines++
+			continue
+		}
+		lines += (len(r)-1)/width + 1
+	}
+	if lines < 1 {
+		lines = 1
+	}
+	return lines
 }
 
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {

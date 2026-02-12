@@ -47,6 +47,9 @@ func (m Model) View() string {
 	} else {
 		var listBuilder strings.Builder
 		visibleIndices := m.visibleIndices()
+		type lineRange struct{ top, bottom int }
+		itemRanges := make(map[int]lineRange, len(visibleIndices))
+		lineCursor := 0
 		for _, i := range visibleIndices {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
@@ -111,6 +114,9 @@ func (m Model) View() string {
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
 			tagLine := renderCompactTags(tags, 2)
 			mediaLine := renderMediaCompact(rant.Media)
+			if mediaLine != "" && !m.showMediaPreview {
+				mediaLine += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#A0A0A0")).Faint(true).Render("(preview hidden: press i)")
+			}
 			itemContent := fmt.Sprintf("%s%s %s  %s%s\n%s\n%s",
 				author, statusText, hiddenText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
 			if tagLine != "" {
@@ -147,6 +153,9 @@ func (m Model) View() string {
 
 			listBuilder.WriteString(itemContent)
 			listBuilder.WriteString("\n")
+			itemLines := len(strings.Split(itemContent, "\n"))
+			itemRanges[i] = lineRange{top: lineCursor, bottom: lineCursor + itemLines - 1}
+			lineCursor += itemLines + 1 // + spacer line between cards
 		}
 
 		listString := strings.TrimSuffix(listBuilder.String(), "\n")
@@ -155,6 +164,43 @@ func (m Model) View() string {
 		}
 		listLines := strings.Split(listString, "\n")
 		viewHeight := m.feedViewportHeight()
+		// Keep selected card visible using exact rendered line ranges.
+		selectedPos := -1
+		orderedRanges := make([]lineRange, 0, len(visibleIndices))
+		for pos, idx := range visibleIndices {
+			if lr, ok := itemRanges[idx]; ok {
+				orderedRanges = append(orderedRanges, lr)
+				if idx == m.cursor {
+					selectedPos = pos
+				}
+			}
+		}
+		if len(orderedRanges) > 0 && selectedPos >= 0 {
+			topPos := 0
+			for topPos < len(orderedRanges) && orderedRanges[topPos].bottom < m.scrollLine {
+				topPos++
+			}
+			if topPos >= len(orderedRanges) {
+				topPos = len(orderedRanges) - 1
+			}
+			lastPos := topPos
+			for lastPos+1 < len(orderedRanges) && orderedRanges[lastPos+1].top < m.scrollLine+viewHeight {
+				lastPos++
+			}
+			// Item-synced scrolling: move viewport when selection hits edge.
+			if m.navDir > 0 && selectedPos == lastPos && lastPos < len(orderedRanges)-1 {
+				m.scrollLine = orderedRanges[topPos+1].top
+			} else if m.navDir < 0 && selectedPos == topPos && topPos > 0 {
+				m.scrollLine = orderedRanges[topPos-1].top
+			}
+		}
+		if lr, ok := itemRanges[m.cursor]; ok {
+			if lr.top < m.scrollLine {
+				m.scrollLine = lr.top
+			} else if lr.bottom >= m.scrollLine+viewHeight {
+				m.scrollLine = lr.bottom - viewHeight + 1
+			}
+		}
 		maxScroll := len(listLines) - viewHeight
 		if maxScroll < 0 {
 			maxScroll = 0
@@ -194,6 +240,9 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
 	} else if m.loadingMore {
 		b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
+	}
+	if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
+		b.WriteString("\n" + panel + "\n")
 	}
 	if m.pagingNotice != "" && len(m.rants) > 0 {
 		b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
@@ -327,6 +376,12 @@ func (m Model) renderDetailView() string {
 	cardContent.WriteString(common.MetadataStyle.Render(meta) + "\n")
 	if len(r.Media) > 0 {
 		cardContent.WriteString("\n" + renderMediaDetail(r.Media) + "\n")
+		if !m.showMediaPreview {
+			cardContent.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#A0A0A0")).
+				Faint(true).
+				Render("preview hidden: press i") + "\n")
+		}
 	}
 
 	if r.URL != "" {
@@ -391,6 +446,9 @@ func (m Model) renderDetailView() string {
 	}
 
 	b.WriteString(parentView + renderedCard)
+	if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
+		b.WriteString("\n\n" + panel)
+	}
 
 	// Replies Section
 	if m.loadingReplies {
@@ -471,6 +529,8 @@ func (m Model) helpView() string {
 			"j/k: focus",
 			"enter: open",
 			"l: like",
+			"i: media",
+			"I: open media",
 			"esc/q: back",
 			"?: all keys",
 		}
@@ -480,6 +540,8 @@ func (m Model) helpView() string {
 			"enter: detail",
 			"p/P: rant",
 			"l: like",
+			"i: media",
+			"I: open media",
 			"q: quit",
 			"?: all keys",
 		}
@@ -507,6 +569,8 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open selected reply thread",
 			"l               like/dislike selected post",
+			"i               toggle image previews",
+			"I               open selected media",
 			"c / C           reply via editor / inline",
 			"x / X           hide post / toggle hidden posts",
 			"b               block selected user",
@@ -526,6 +590,8 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open detail",
 			"t / T           next/prev tab",
+			"i               toggle image previews",
+			"I               open selected media",
 			"H               set hashtag feed tag",
 			"p / P           new rant via editor / inline",
 			"v               edit profile",
@@ -550,6 +616,8 @@ func (m Model) renderKeyDialog() string {
 		lines = []string{
 			"p / P           new rant via editor / inline",
 			"t / T           next/prev tab",
+			"i               toggle image previews",
+			"I               open selected media",
 			"H               set hashtag feed tag",
 			"v               edit profile",
 			"B               show blocked users",
@@ -838,4 +906,49 @@ func renderMediaDetail(media []domain.MediaAttachment) string {
 		}
 	}
 	return b.String()
+}
+
+func (m Model) renderSelectedMediaPreviewPanel() string {
+	if !m.showMediaPreview {
+		return ""
+	}
+	r := m.getSelectedRant()
+	if m.showDetail {
+		if m.focusedRant != nil {
+			r = *m.focusedRant
+		} else if len(m.rants) > 0 && m.cursor >= 0 && m.cursor < len(m.rants) {
+			r = m.rants[m.cursor].Rant
+		}
+	}
+	url := firstImagePreviewURL(r.Media)
+	if url == "" {
+		return ""
+	}
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6FA8DC")).
+		Bold(true).
+		Render("Image Preview (i: toggle, I: open full-res)")
+	if m.mediaLoading[url] {
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3A4E63")).
+			Padding(0, 1).
+			Render(header + "\n" + m.spinner.View() + " loading preview...")
+	}
+	preview, ok := m.mediaPreview[url]
+	if !ok {
+		return ""
+	}
+	if preview == "" {
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3A4E63")).
+			Padding(0, 1).
+			Render(header + "\npreview unavailable")
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3A4E63")).
+		Padding(0, 1).
+		Render(header + "\n" + preview)
 }

@@ -21,6 +21,10 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 - Media metadata rendering:
   - Feed shows compact media hint (image/video/audio counts + optional alt snippet)
   - Detail shows full media list with type, size (if available), alt text, and URL
+- Phase 2 media previews:
+  - ANSI image thumbnail preview for the selected post/reply (feed + detail)
+  - Toggle previews with `i` (media rows show "preview hidden" when off)
+  - Open selected media in browser with `I`
 - Post creation and replies:
   - Compose with `$EDITOR` (`p` / `c`) or inline composer (`P` / `C`)
   - Optimistic posting/reply updates
@@ -96,6 +100,8 @@ Global:
 
 - `?` — full keymap dialog
 - `ctrl+c` — force quit
+- `i` — toggle media previews
+- `I` — open selected media
 
 Feed:
 
