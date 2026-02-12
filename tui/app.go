@@ -454,7 +454,7 @@ func (a App) View() string {
 		s += "\n" + common.StatusBarStyle.Render(a.status)
 	}
 	if a.confirmQuit {
-		s = common.ConfirmStyle.Render(" Exit TerminalRant? (y/n) ") + "\n" + s
+		s = "\n" + common.ConfirmStyle.Render(" Exit TerminalRant? (y/n) ") + "\n" + s
 	}
 
 	return s
