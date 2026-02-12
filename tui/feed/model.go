@@ -307,6 +307,7 @@ type Model struct {
 	followUsername   string
 	followTarget     bool
 	followingByID    map[string]bool
+	recentFollows    []string
 	followingDirty   bool
 	showBlocked      bool
 	loadingBlocked   bool
@@ -739,6 +740,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		if strings.TrimSpace(msg.AccountID) != "" {
 			m.followingByID[msg.AccountID] = msg.Follow
+			if msg.Follow {
+				m.addRecentFollow(msg.AccountID)
+			} else {
+				m.removeRecentFollow(msg.AccountID)
+			}
 			if m.showProfile && m.profile.ID == msg.AccountID {
 				if msg.Follow {
 					m.profile.Followers++
@@ -1664,10 +1670,12 @@ type DeleteRantMsg struct {
 
 func (m Model) fetchRants(reqSeq int) tea.Cmd {
 	timeline := m.timeline
+	account := m.account
 	hashtag := m.hashtag
 	defaultHashtag := m.defaultHashtag
 	source := m.feedSource
 	queryKey := m.currentFeedQueryKey()
+	recentFollows := append([]string{}, m.recentFollows...)
 	return func() tea.Msg {
 		var (
 			rants []domain.Rant
@@ -1682,6 +1690,33 @@ func (m Model) fetchRants(reqSeq int) tea.Cmd {
 			rants, err = timeline.FetchTrendingPage(context.Background(), defaultLimit, "")
 		case sourceFollowing:
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, "")
+			if err == nil && len(rants) == 0 && len(recentFollows) > 0 && account != nil {
+				seeded := make([]domain.Rant, 0, defaultLimit)
+				seen := make(map[string]struct{}, defaultLimit)
+				for _, accountID := range recentFollows {
+					posts, perr := account.PostsByAccount(context.Background(), accountID, 5, "")
+					if perr != nil {
+						continue
+					}
+					for _, p := range posts {
+						if _, ok := seen[p.ID]; ok {
+							continue
+						}
+						seen[p.ID] = struct{}{}
+						seeded = append(seeded, p)
+					}
+					if len(seeded) >= defaultLimit {
+						break
+					}
+				}
+				sort.SliceStable(seeded, func(i, j int) bool {
+					return seeded[i].CreatedAt.After(seeded[j].CreatedAt)
+				})
+				if len(seeded) > defaultLimit {
+					seeded = seeded[:defaultLimit]
+				}
+				rants = seeded
+			}
 		}
 		if err != nil {
 			return RantsErrorMsg{Err: err, QueryKey: queryKey, ReqSeq: reqSeq}
@@ -2663,6 +2698,40 @@ func (m *Model) prepareSourceChange() {
 	m.oldestFeedID = ""
 	m.hasMoreFeed = true
 	m.loading = true
+}
+
+func (m *Model) addRecentFollow(accountID string) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return
+	}
+	out := make([]string, 0, len(m.recentFollows)+1)
+	out = append(out, accountID)
+	for _, id := range m.recentFollows {
+		if id == accountID {
+			continue
+		}
+		out = append(out, id)
+		if len(out) >= 20 {
+			break
+		}
+	}
+	m.recentFollows = out
+}
+
+func (m *Model) removeRecentFollow(accountID string) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" || len(m.recentFollows) == 0 {
+		return
+	}
+	out := m.recentFollows[:0]
+	for _, id := range m.recentFollows {
+		if id == accountID {
+			continue
+		}
+		out = append(out, id)
+	}
+	m.recentFollows = out
 }
 
 // ... Loading, Err, Cursor unchanged ...
