@@ -98,7 +98,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
-		if a.active == feedView && key.Matches(msg, a.keys.Quit) && !a.feed.IsInDetailView() {
+		if a.active == feedView && key.Matches(msg, a.keys.Quit) && !a.feed.IsInDetailView() && !a.feed.IsDialogOpen() {
 			return a, tea.Quit
 		}
 

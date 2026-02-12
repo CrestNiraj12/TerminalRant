@@ -78,17 +78,23 @@ func (s *timelineService) FetchTrendingPage(_ context.Context, limit int, maxID 
 	if limit <= 0 {
 		limit = 20
 	}
-	// Mastodon trends endpoint does not support max_id pagination consistently.
-	// For deeper pages, fall back to public timeline so navigation still works.
-	if maxID != "" {
-		return s.FetchPublicPage(context.Background(), limit, maxID)
+	// Trends endpoint is typically not pageable by max_id. We use trends for
+	// the first page, then public timeline pagination for older pages.
+	if maxID == "" {
+		path := fmt.Sprintf("/api/v1/trends/statuses?limit=%d", limit)
+		rants, err := s.fetchTimelinePath(path)
+		if err == nil && len(rants) > 0 {
+			return rants, nil
+		}
+		return s.FetchPublicPage(context.Background(), limit, "")
 	}
-	path := fmt.Sprintf("/api/v1/trends/statuses?limit=%d", limit)
-	rants, err := s.fetchTimelinePath(path)
+
+	// When maxID originated from trends IDs, some servers may return nothing.
+	// If that happens, retry with the first public page to establish paging.
+	rants, err := s.FetchPublicPage(context.Background(), limit, maxID)
 	if err != nil {
 		return nil, err
 	}
-	// Some instances return no trends; gracefully fall back to public timeline.
 	if len(rants) == 0 {
 		return s.FetchPublicPage(context.Background(), limit, "")
 	}

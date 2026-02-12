@@ -2,6 +2,7 @@ package feed
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"terminalrant/tui/common"
@@ -29,11 +30,10 @@ func (m Model) View() string {
 	// Header Layout
 	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
-	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
 
 	b.WriteString(title + tagline + "\n")
 	b.WriteString(m.renderTabs() + "\n")
-	b.WriteString(hashtag + "\n")
+	b.WriteString("\n")
 
 	// Content area
 	if m.loading && len(m.rants) == 0 {
@@ -74,16 +74,17 @@ func (m Model) View() string {
 				statusText = common.ErrorStyle.Render(" (failed)")
 			}
 			hiddenText := ""
-			if m.showHidden && m.isMarkedHidden(rant) {
+			isHiddenMarked := m.showHidden && m.isMarkedHidden(rant)
+			if isHiddenMarked {
 				hiddenText = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#111111")).
-					Background(lipgloss.Color("#ED8796")).
-					Bold(true).
+					Foreground(lipgloss.Color("#A9A9A9")).
+					Background(lipgloss.Color("#3A3A3A")).
+					Faint(true).
 					Padding(0, 1).
 					Render("HIDDEN")
 			}
 
-			content := common.StripHashtag(rant.Content, m.hashtag)
+			content, tags := splitContentAndTags(rant.Content)
 
 			// Metadata: Likes and Replies
 			likeIcon := "♡"
@@ -104,18 +105,24 @@ func (m Model) View() string {
 			}
 
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
-
+			tagLine := renderCompactTags(tags, 2)
 			itemContent := fmt.Sprintf("%s%s %s  %s%s\n%s\n%s",
 				author, statusText, hiddenText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
+			if tagLine != "" {
+				itemContent = fmt.Sprintf("%s%s %s  %s%s\n%s\n\n%s\n\n%s",
+					author, statusText, hiddenText, timestamp, replyIndicator, body, tagLine, common.MetadataStyle.Render(meta))
+			}
 
 			itemBase := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				Padding(0, 1).
-				Height(4)
+				Padding(0, 1)
 			itemSelected := itemBase.Copy().BorderForeground(lipgloss.Color("#FF8700"))
 			itemUnselected := itemBase.Copy().BorderForeground(lipgloss.Color("#45475A"))
 
 			if i == m.cursor {
+				if isHiddenMarked {
+					itemContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8A8A")).Faint(true).Render(itemContent)
+				}
 				itemContent = itemSelected.Render(itemContent)
 				if m.confirmDelete {
 					itemContent += "\n" + common.ConfirmStyle.Render("  Delete this rant? (y/n)")
@@ -124,6 +131,9 @@ func (m Model) View() string {
 					itemContent += "\n" + common.ConfirmStyle.Render(fmt.Sprintf("  Block @%s? (y/n)", m.blockUsername))
 				}
 			} else {
+				if isHiddenMarked {
+					itemContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8A8A")).Faint(true).Render(itemContent)
+				}
 				itemContent = itemUnselected.Render(itemContent)
 			}
 
@@ -277,9 +287,12 @@ func (m Model) renderDetailView() string {
 	cardContent.WriteString("\n")
 
 	// Full content (wrapped) - strip hashtag for display
-	displayContent := common.StripHashtag(r.Content, m.hashtag)
+	displayContent, tags := splitContentAndTags(r.Content)
 	content := common.ContentStyle.Width(66).Render(displayContent)
 	cardContent.WriteString(content + "\n\n")
+	if len(tags) > 0 {
+		cardContent.WriteString(renderAllTags(tags) + "\n\n")
+	}
 
 	// Metadata: Likes and Replies
 	likeIcon := "♡"
@@ -291,9 +304,9 @@ func (m Model) renderDetailView() string {
 	if m.showHidden && m.isMarkedHidden(r) {
 		cardContent.WriteString(
 			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#111111")).
-				Background(lipgloss.Color("#ED8796")).
-				Bold(true).
+				Foreground(lipgloss.Color("#A9A9A9")).
+				Background(lipgloss.Color("#3A3A3A")).
+				Faint(true).
 				Padding(0, 1).
 				Render("HIDDEN") + "\n",
 		)
@@ -335,12 +348,15 @@ func (m Model) renderDetailView() string {
 			Width(74).
 			Render(cardContent.String())
 	}
+	if m.showHidden && m.isMarkedHidden(r) {
+		renderedCard = lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8A8A")).Faint(true).Render(renderedCard)
+	}
 
 	// Parent Post Card (if available)
 	var parentView string
 	if len(m.ancestors) > 0 {
 		parent := m.ancestors[len(m.ancestors)-1]
-		parentContent := common.StripHashtag(parent.Content, m.hashtag)
+		parentContent, _ := splitContentAndTags(parent.Content)
 		parentSummary := truncateToTwoLines(parentContent, 66)
 
 		parentCard := lipgloss.NewStyle().
@@ -365,23 +381,7 @@ func (m Model) renderDetailView() string {
 	} else if len(m.replies) > 0 {
 		b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Replies") + "\n")
 
-		start := m.detailStart
-		if start < 0 {
-			start = 0
-		}
-		if start > len(m.replies) {
-			start = len(m.replies)
-		}
-		end := start + m.detailReplySlots()
-		if end > len(m.replies) {
-			end = len(m.replies)
-		}
-
-		if start > 0 {
-			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("▲ more above") + "\n")
-		}
-
-		for i := start; i < end; i++ {
+		for i := 0; i < len(m.replies); i++ {
 			r := m.replies[i]
 			// Calculate depth based on relationship to focused rant
 			depth := 0
@@ -397,7 +397,8 @@ func (m Model) renderDetailView() string {
 
 			author := common.AuthorStyle.Render("@" + r.Username)
 			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
-			contentLines := strings.Split(truncateToTwoLines(common.StripHashtag(r.Content, m.hashtag), 56), "\n")
+			replyContentClean, _ := splitContentAndTags(r.Content)
+			contentLines := strings.Split(truncateToTwoLines(replyContentClean, 56), "\n")
 
 			indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
 			indicator := indicatorStyle.Render("┃ ")
@@ -422,11 +423,6 @@ func (m Model) renderDetailView() string {
 			meta := fmt.Sprintf("%s %d  ↩ %d",
 				likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
 
-			// Depth hint for hidden replies
-			if depth == 1 && r.RepliesCount > 0 {
-				meta += lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true).Render(" (press enter to see more replies...)")
-			}
-
 			replyContent := fmt.Sprintf("  %s%s %s\n%s\n  %s%s",
 				indentPrefix, author, timestamp, strings.TrimSuffix(replyBody.String(), "\n"), indentPrefix, common.MetadataStyle.Render(meta))
 
@@ -438,25 +434,13 @@ func (m Model) renderDetailView() string {
 			}
 			b.WriteString("\n" + replyContent + "\n")
 		}
-		if end < len(m.replies) {
-			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("▼ more below") + "\n")
-		}
-		if m.hasMoreReplies {
-			remaining := len(m.replyAll) - len(m.replies)
-			if remaining < 0 {
-				remaining = 0
-			}
-			b.WriteString("\n  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render(
-				fmt.Sprintf("n: load more replies (%d remaining)", remaining),
-			))
-		}
 	}
 	if m.confirmBlock {
 		b.WriteString("\n" + common.ConfirmStyle.Render(fmt.Sprintf("  Block @%s? (y/n)", m.blockUsername)))
 	}
 	b.WriteString("\n\n" + m.helpView())
 
-	return b.String()
+	return m.renderDetailViewport(b.String())
 }
 
 func (m Model) helpView() string {
@@ -503,7 +487,6 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open selected reply thread",
 			"l               like/dislike selected post",
-			"n               load more replies",
 			"c / C           reply via editor / inline",
 			"x / X           hide post / toggle hidden posts",
 			"b               block selected user",
@@ -522,8 +505,7 @@ func (m Model) renderKeyDialog() string {
 		lines = []string{
 			"j/k or up/down  move focus",
 			"enter           open detail",
-			"n               load older posts",
-			"t               switch feed (#terminalrant/trending/personal/custom)",
+			"t / T           next/prev tab",
 			"H               set hashtag feed tag",
 			"p / P           new rant via editor / inline",
 			"v               edit profile",
@@ -547,8 +529,7 @@ func (m Model) renderKeyDialog() string {
 	} else {
 		lines = []string{
 			"p / P           new rant via editor / inline",
-			"n               load older posts (when available)",
-			"t               switch feed (#terminalrant/trending/personal/custom)",
+			"t / T           next/prev tab",
 			"H               set hashtag feed tag",
 			"v               edit profile",
 			"B               show blocked users",
@@ -577,7 +558,12 @@ func (m Model) renderTabs() string {
 		{label: "#terminalrant", source: sourceTerminalRant},
 		{label: "trending", source: sourceTrending},
 		{label: "personal", source: sourcePersonal},
-		{label: "#" + m.hashtag, source: sourceCustomHashtag},
+	}
+	if m.hasCustomTab() {
+		tabs = append(tabs, struct {
+			label  string
+			source feedSource
+		}{label: "#" + m.hashtag, source: sourceCustomHashtag})
 	}
 	active := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#111111")).
@@ -597,7 +583,7 @@ func (m Model) renderTabs() string {
 			rendered = append(rendered, inactive.Render(t.label))
 		}
 	}
-	return lipgloss.NewStyle().MarginLeft(2).Render(strings.Join(rendered, " "))
+	return lipgloss.NewStyle().MarginLeft(2).PaddingTop(1).Render(strings.Join(rendered, " "))
 }
 
 func (m Model) renderBlockedUsersDialog() string {
@@ -634,4 +620,118 @@ func (m Model) renderBlockedUsersDialog() string {
 		Margin(1, 2).
 		Width(74).
 		Render(body.String())
+}
+
+func (m Model) renderDetailViewport(content string) string {
+	lines := strings.Split(content, "\n")
+	if m.height <= 0 {
+		return content
+	}
+	viewHeight := m.height - 2
+	if viewHeight < 8 {
+		viewHeight = 8
+	}
+	maxScroll := len(lines) - viewHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := m.detailScrollLine
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + viewHeight
+	if end > len(lines) {
+		end = len(lines)
+	}
+	visible := lines[scroll:end]
+	for len(visible) < viewHeight {
+		visible = append(visible, "")
+	}
+	markerTop := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more above")
+	markerBottom := lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Bold(true).Render("▼ more below")
+	if scroll > 0 && len(visible) > 0 {
+		visible[0] = markerTop
+	}
+	if end < len(lines) && len(visible) > 0 {
+		visible[len(visible)-1] = markerBottom
+	}
+	return strings.Join(visible, "\n")
+}
+
+var hashtagRe = regexp.MustCompile(`(?i)#[a-z0-9_]+`)
+
+func splitContentAndTags(content string) (string, []string) {
+	found := hashtagRe.FindAllString(content, -1)
+	tags := uniqueLower(found)
+	lines := strings.Split(content, "\n")
+	cleaned := make([]string, 0, len(lines))
+	for _, ln := range lines {
+		line := hashtagRe.ReplaceAllString(ln, "")
+		line = strings.Join(strings.Fields(line), " ")
+		cleaned = append(cleaned, strings.TrimSpace(line))
+	}
+	out := strings.TrimSpace(strings.Join(cleaned, "\n"))
+	return out, tags
+}
+
+func uniqueLower(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		low := strings.ToLower(strings.TrimSpace(t))
+		if low == "" {
+			continue
+		}
+		if _, ok := seen[low]; ok {
+			continue
+		}
+		seen[low] = struct{}{}
+		out = append(out, low)
+	}
+	return out
+}
+
+func renderCompactTags(tags []string, max int) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	if max < 1 {
+		max = 1
+	}
+	show := tags
+	if len(show) > max {
+		show = show[:max]
+	}
+	capStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#A9A9A9")).
+		Background(lipgloss.Color("#2F2F2F")).
+		Padding(0, 1).
+		Faint(true)
+	parts := make([]string, 0, len(show)+1)
+	for _, t := range show {
+		parts = append(parts, capStyle.Render(t))
+	}
+	if len(tags) > max {
+		parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("#777777")).Faint(true).Render(fmt.Sprintf("+%d more", len(tags)-max)))
+	}
+	return strings.Join(parts, " ")
+}
+
+func renderAllTags(tags []string) string {
+	if len(tags) == 0 {
+		return ""
+	}
+	capStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#A9A9A9")).
+		Background(lipgloss.Color("#2F2F2F")).
+		Padding(0, 1).
+		Faint(true)
+	parts := make([]string, 0, len(tags))
+	for _, t := range tags {
+		parts = append(parts, capStyle.Render(t))
+	}
+	return strings.Join(parts, " ")
 }

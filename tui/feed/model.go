@@ -21,7 +21,6 @@ const (
 	defaultLimit    = 20
 	replyPageSize   = 20
 	prefetchTrigger = 3
-	feedItemLines   = 6
 	creatorGitHub   = "https://github.com/CrestNiraj12"
 )
 
@@ -206,52 +205,53 @@ type RantItem struct {
 
 // Model holds the state for the feed (timeline) view.
 type Model struct {
-	timeline       app.TimelineService
-	defaultHashtag string
-	hashtag        string
-	feedSource     feedSource
-	rants          []RantItem
-	cursor         int
-	loading        bool
-	loadingMore    bool
-	hasMoreFeed    bool
-	oldestFeedID   string
-	err            error
-	keys           common.KeyMap
-	spinner        spinner.Model
-	confirmDelete  bool // Whether we are in the 'Are you sure?' delete step
-	showDetail     bool // Whether we are in full-post view
-	height         int  // Terminal height
-	startIndex     int  // First visible item in the list (for scrolling)
-	scrollLine     int  // Line-based scroll for feed viewport
-	ancestors      []domain.Rant
-	replies        []domain.Rant
-	replyAll       []domain.Rant
-	replyVisible   int
-	hasMoreReplies bool
-	loadingReplies bool
-	detailCursor   int // 0 for main post, 1...n for replies
-	focusedRant    *domain.Rant
-	threadCache    map[string]threadData
-	viewStack      []*domain.Rant // To support going back in deep threading
-	showAllHints   bool
-	pagingNotice   string
-	hiddenIDs      map[string]bool
-	hiddenAuthors  map[string]bool
-	showHidden     bool
-	confirmBlock   bool
-	blockAccountID string
-	blockUsername  string
-	showBlocked    bool
-	loadingBlocked bool
-	blockedErr     error
-	blockedUsers   []app.BlockedUser
-	blockedCursor  int
-	confirmUnblock bool
-	unblockTarget  app.BlockedUser
-	hashtagInput   bool
-	hashtagBuffer  string
-	detailStart    int
+	timeline         app.TimelineService
+	defaultHashtag   string
+	hashtag          string
+	feedSource       feedSource
+	rants            []RantItem
+	cursor           int
+	loading          bool
+	loadingMore      bool
+	hasMoreFeed      bool
+	oldestFeedID     string
+	err              error
+	keys             common.KeyMap
+	spinner          spinner.Model
+	confirmDelete    bool // Whether we are in the 'Are you sure?' delete step
+	showDetail       bool // Whether we are in full-post view
+	height           int  // Terminal height
+	startIndex       int  // First visible item in the list (for scrolling)
+	scrollLine       int  // Line-based scroll for feed viewport
+	ancestors        []domain.Rant
+	replies          []domain.Rant
+	replyAll         []domain.Rant
+	replyVisible     int
+	hasMoreReplies   bool
+	loadingReplies   bool
+	detailCursor     int // 0 for main post, 1...n for replies
+	detailScrollLine int
+	focusedRant      *domain.Rant
+	threadCache      map[string]threadData
+	viewStack        []*domain.Rant // To support going back in deep threading
+	showAllHints     bool
+	pagingNotice     string
+	hiddenIDs        map[string]bool
+	hiddenAuthors    map[string]bool
+	showHidden       bool
+	confirmBlock     bool
+	blockAccountID   string
+	blockUsername    string
+	showBlocked      bool
+	loadingBlocked   bool
+	blockedErr       error
+	blockedUsers     []app.BlockedUser
+	blockedCursor    int
+	confirmUnblock   bool
+	unblockTarget    app.BlockedUser
+	hashtagInput     bool
+	hashtagBuffer    string
+	detailStart      int
 }
 
 // New creates a feed model with injected dependencies.
@@ -264,6 +264,9 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 		tag = "terminalrant"
 	}
 	source := parseFeedSource(initialSource)
+	if source == sourceCustomHashtag && strings.EqualFold(tag, "terminalrant") {
+		source = sourceTerminalRant
+	}
 
 	return Model{
 		timeline:       timeline,
@@ -368,7 +371,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = nil
 		m.pagingNotice = ""
 		m.oldestFeedID = m.lastFeedID()
-		m.hasMoreFeed = len(msg.Rants) == defaultLimit
+		if m.feedSource == sourceTrending {
+			m.hasMoreFeed = len(msg.Rants) > 0
+		} else {
+			m.hasMoreFeed = len(msg.Rants) == defaultLimit
+		}
 		if m.cursor >= len(m.rants) {
 			m.cursor = 0
 		}
@@ -404,7 +411,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			added++
 		}
 		m.oldestFeedID = m.lastFeedID()
-		m.hasMoreFeed = len(msg.Rants) == defaultLimit && added > 0
+		if m.feedSource == sourceTrending {
+			m.hasMoreFeed = added > 0
+		} else {
+			m.hasMoreFeed = len(msg.Rants) == defaultLimit && added > 0
+		}
 		if added == 0 && len(m.rants) > 0 {
 			m.hasMoreFeed = false
 			m.pagingNotice = "🚀 End of the rantverse reached."
@@ -455,6 +466,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.focusedRant = nil
 			m.viewStack = nil
 			m.detailStart = 0
+			m.detailScrollLine = 0
 			m.showBlocked = false
 			m.loadingBlocked = false
 			m.blockedErr = nil
@@ -777,12 +789,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, nil
 				}
 				m.hashtag = tag
-				m.feedSource = sourceCustomHashtag
+				if strings.EqualFold(tag, m.defaultHashtag) {
+					m.feedSource = sourceTerminalRant
+				} else {
+					m.feedSource = sourceCustomHashtag
+				}
 				m.hashtagBuffer = ""
-				m.loading = true
-				m.loadingMore = false
-				m.hasMoreFeed = true
-				m.oldestFeedID = ""
+				m.prepareSourceChange()
 				m.pagingNotice = "Switched to #" + tag
 				return m, tea.Batch(
 					m.fetchRants(),
@@ -807,11 +820,39 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keys.SwitchFeed):
-			m.feedSource = (m.feedSource + 1) % 4
-			m.loading = true
-			m.loadingMore = false
-			m.hasMoreFeed = true
-			m.oldestFeedID = ""
+			if m.showDetail {
+				m.pagingNotice = "Exit detail view to switch tabs."
+				return m, nil
+			}
+			if m.hasCustomTab() {
+				m.feedSource = (m.feedSource + 1) % 4
+			} else {
+				m.feedSource = (m.feedSource + 1) % 3
+			}
+			m.prepareSourceChange()
+			switch m.feedSource {
+			case sourceTerminalRant:
+				m.pagingNotice = "Feed: #terminalrant"
+			case sourceTrending:
+				m.pagingNotice = "Feed: trending"
+			case sourcePersonal:
+				m.pagingNotice = "Feed: personal"
+			case sourceCustomHashtag:
+				m.pagingNotice = "Feed: #" + m.hashtag
+			}
+			return m, tea.Batch(m.fetchRants(), m.emitPrefsChanged())
+
+		case msg.String() == "T":
+			if m.showDetail {
+				m.pagingNotice = "Exit detail view to switch tabs."
+				return m, nil
+			}
+			if m.hasCustomTab() {
+				m.feedSource = (m.feedSource + 3) % 4
+			} else {
+				m.feedSource = (m.feedSource + 2) % 3
+			}
+			m.prepareSourceChange()
 			switch m.feedSource {
 			case sourceTerminalRant:
 				m.pagingNotice = "Feed: #terminalrant"
@@ -887,7 +928,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.showDetail {
 				if m.detailCursor > 0 {
 					m.detailCursor--
-					m.ensureDetailCursorVisible()
+				}
+				if m.detailScrollLine > 0 {
+					m.detailScrollLine--
 				}
 				return m, nil
 			}
@@ -902,7 +945,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if m.hasMoreReplies && m.detailCursor >= len(m.replies)-prefetchTrigger {
 					m.loadMoreReplies()
 				}
-				m.ensureDetailCursorVisible()
+				m.detailScrollLine++
 				return m, nil
 			}
 			m.confirmDelete = false
@@ -938,6 +981,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.scrollLine = 0
 			m.detailCursor = 0
 			m.detailStart = 0
+			m.detailScrollLine = 0
 			m.showBlocked = false
 			m.confirmUnblock = false
 			m.unblockTarget = app.BlockedUser{}
@@ -949,6 +993,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.showDetail = true
 					m.detailCursor = 0
 					m.detailStart = 0
+					m.detailScrollLine = 0
 					m.replies = nil
 					m.replyAll = nil
 					m.replyVisible = 0
@@ -965,6 +1010,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.focusedRant = &selected
 					m.detailCursor = 0
 					m.detailStart = 0
+					m.detailScrollLine = 0
 					m.replies = nil
 					m.replyAll = nil
 					m.replyVisible = 0
@@ -978,6 +1024,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keys.LoadMore):
+			if m.confirmDelete {
+				m.confirmDelete = false
+				return m, nil
+			}
+			if m.confirmBlock {
+				m.confirmBlock = false
+				m.blockAccountID = ""
+				m.blockUsername = ""
+				return m, nil
+			}
 			if m.showDetail {
 				m.loadMoreReplies()
 				return m, nil
@@ -1086,6 +1142,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.viewStack = m.viewStack[:len(m.viewStack)-1]
 					m.detailCursor = 0
 					m.detailStart = 0
+					m.detailScrollLine = 0
 
 					id := m.rants[m.cursor].Rant.ID
 					if m.focusedRant != nil {
@@ -1104,6 +1161,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.focusedRant = nil
 				m.viewStack = nil
 				m.detailStart = 0
+				m.detailScrollLine = 0
 				return m, nil
 			}
 			if msg.String() == "q" {
@@ -1164,6 +1222,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.focusedRant = &parent
 			m.detailCursor = 0
 			m.detailStart = 0
+			m.detailScrollLine = 0
 			m.replies = nil
 			m.replyAll = nil
 			m.replyVisible = 0
@@ -1340,16 +1399,19 @@ func (m *Model) ensureFeedCursorVisible() {
 		return
 	}
 	m.ensureVisibleCursor()
-	pos := 0
-	for i, idx := range visible {
+	top := 0
+	bottom := 0
+	linePos := 0
+	for _, idx := range visible {
+		lines := m.feedItemRenderedLines(m.rants[idx].Rant)
 		if idx == m.cursor {
-			pos = i
+			top = linePos
+			bottom = linePos + lines - 1
 			break
 		}
+		linePos += lines
 	}
 	viewHeight := m.feedViewportHeight()
-	top := pos * feedItemLines
-	bottom := top + feedItemLines - 1
 	if top < m.scrollLine {
 		m.scrollLine = top
 	} else if bottom >= m.scrollLine+viewHeight {
@@ -1358,6 +1420,23 @@ func (m *Model) ensureFeedCursorVisible() {
 	if m.scrollLine < 0 {
 		m.scrollLine = 0
 	}
+}
+
+func (m Model) feedItemRenderedLines(r domain.Rant) int {
+	content, tags := splitContentAndTags(r.Content)
+	preview := truncateToTwoLines(content, 70)
+	previewLines := len(strings.Split(preview, "\n"))
+	if previewLines < 1 {
+		previewLines = 1
+	}
+	// Header + body + metadata
+	lines := 1 + previewLines + 1
+	// Optional tag row with top/bottom padding.
+	if len(tags) > 0 {
+		lines += 3
+	}
+	// Rounded border top+bottom and one spacer line between cards.
+	return lines + 3
 }
 
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {
@@ -1480,12 +1559,12 @@ func (m *Model) ensureDetailCursorVisible() {
 func (m Model) detailReplySlots() int {
 	// Header + parent/main card + footer/hints leave room for reply window.
 	h := m.height - 30
-	if h < 5 {
-		h = 5
+	if h < 20 {
+		h = 20
 	}
 	slots := h / 5
-	if slots < 1 {
-		slots = 1
+	if slots < 4 {
+		slots = 4
 	}
 	return slots
 }
@@ -1692,11 +1771,31 @@ func (m Model) emitPrefsChanged() tea.Cmd {
 	}
 }
 
+func (m Model) hasCustomTab() bool {
+	return !strings.EqualFold(strings.TrimSpace(m.hashtag), strings.TrimSpace(m.defaultHashtag))
+}
+
+func (m *Model) prepareSourceChange() {
+	m.loadingMore = false
+	m.cursor = 0
+	m.startIndex = 0
+	m.scrollLine = 0
+	m.rants = nil
+	m.oldestFeedID = ""
+	m.hasMoreFeed = true
+	m.loading = true
+}
+
 // ... Loading, Err, Cursor unchanged ...
 
 // IsInDetailView returns true if the detail view is active.
 func (m Model) IsInDetailView() bool {
 	return m.showDetail
+}
+
+// IsDialogOpen reports whether a modal/overlay should capture quit/back keys.
+func (m Model) IsDialogOpen() bool {
+	return m.showAllHints || m.showBlocked || m.hashtagInput || m.confirmBlock || m.confirmDelete
 }
 
 // SelectedRant returns the currently highlighted rant, if any.

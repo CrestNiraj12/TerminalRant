@@ -2,18 +2,46 @@
 
 Ranting space for developers that live in the terminal.
 
-TerminalRant is a terminal UI (TUI) client for Mastodon timelines that follow a
-single hashtag. It lets you read, post, edit, and delete short “rants” without
-leaving your terminal.
+TerminalRant is a terminal UI (TUI) client for Mastodon. It lets you read,
+post, reply, edit, and moderate your feed without leaving the terminal.
 
 ## Features
 
-- View latest posts from a hashtag timeline (newest first)
-- Post new rants
-- Edit and delete your own rants
-- Compose using either:
-  - Your `$EDITOR` (full-screen editor)
-  - An inline TUI textarea
+- OAuth login
+- Feed tabs:
+  - `#terminalrant`
+  - `trending`
+  - `personal`
+  - custom hashtag tab (only shown when custom tag differs from `terminalrant`)
+- Switch tabs with `t` (next) and `T` (previous)
+- Hashtag controls:
+  - Change custom hashtag with `H`
+  - Hashtags rendered as small capsules in feed/detail
+  - Feed shows compact tags with `+N more`, detail shows all tags
+- Post creation and replies:
+  - Compose with `$EDITOR` (`p` / `c`) or inline composer (`P` / `C`)
+  - Optimistic posting/reply updates
+- Post interactions:
+  - Like/unlike (`l`)
+  - Reply (`c`/`C`)
+  - Open URL (`o`)
+  - Edit/delete own posts (`e`/`E`/`d`)
+- Moderation:
+  - Hide post locally (`x`)
+  - Toggle hidden posts (`X`)
+  - Hidden posts shown in muted style with `HIDDEN` label when revealed
+  - Block selected author (`b`) with confirmation
+  - Manage blocked users dialog (`B`) and unblock with confirmation
+- Navigation:
+  - Feed and detail views with keyboard navigation
+  - Detail view supports full-page scrolling for long threads
+  - Parent-thread jump from reply detail (`u`)
+- Key help:
+  - Minimal hints shown inline
+  - Full key dialog via `?`
+  - `q` closes dialogs/detail first before quitting from feed root
+- Persistent UI state:
+  - Remembers custom hashtag and selected feed tab between runs
 
 ## Requirements
 
@@ -56,36 +84,61 @@ TERMINALRANT_HASHTAG="terminalrant" \
 go run .
 ```
 
-On first run, TerminalRant opens a browser window for OAuth login and saves a
-session token under `TERMINALRANT_AUTH_DIR`.
+On first run, TerminalRant opens a browser window for OAuth and stores auth
+state under `TERMINALRANT_AUTH_DIR`.
 
 ### Key bindings
 
-From the timeline:
+Global:
 
-- `q` / `ctrl+c` — quit
+- `?` — full keymap dialog
+- `ctrl+c` — force quit
+
+Feed:
+
+- `j`/`k` or arrow keys — move
+- `enter` — open detail
+- `t` / `T` — next/previous tab
+- `H` — set custom hashtag
 - `r` — refresh
-- `j`/`k` or arrow keys — navigate
-- `p` — compose via `$EDITOR`
-- `P` — compose inline
-
-When a post is yours (marked with `(you)`):
-
-- `enter` — open actions menu
+- `p` / `P` — new post (`$EDITOR` / inline)
+- `c` / `C` — reply (`$EDITOR` / inline)
+- `l` — like/unlike
 - `e` — edit via `$EDITOR`
 - `E` — edit inline
-- `d` — delete (with confirmation)
+- `d` — delete own post (confirmation)
+- `x` / `X` — hide post / toggle hidden posts
+- `b` — block selected post author (confirmation)
+- `B` — blocked users dialog
+- `o` — open post URL
+- `g` — open creator GitHub
+- `q` — quit (only when no dialog/detail is open)
 
-While composing inline:
+Detail:
 
-- `ctrl+d` — post/update
-- `esc` — cancel
+- `j`/`k` or arrow keys — move/scroll detail page
+- `enter` — open selected reply thread
+- `u` — open parent post
+- `r` — refresh thread
+- `l` — like/unlike selected
+- `c` / `C` — reply
+- `o` — open URL
+- `esc` / `q` — back
+
+Dialogs:
+
+- `q` / `esc` — close dialog
+- Block confirm: `y`/`n`
+- Delete confirm: `y`/`n`
+- Blocked users dialog:
+  - `j`/`k` — select user
+  - `u` — unblock selected (confirmation)
 
 ## Notes
 
-- The tracked hashtag is automatically appended on post/edit if it’s not already
-  present.
+- The configured hashtag is auto-appended on post/edit/reply if missing.
 - For display, HTML returned from Mastodon is stripped for terminal rendering.
+- UI state is stored in `ui_state.json` under `TERMINALRANT_AUTH_DIR`.
 
 ## Development
 

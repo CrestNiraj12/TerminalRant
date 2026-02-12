@@ -8,7 +8,7 @@ type KeyMap struct {
 	ForceQuit    key.Binding // ctrl+c — force quit from any view
 	ToggleHints  key.Binding // ? — toggle hidden key hints
 	Refresh      key.Binding
-	LoadMore     key.Binding // n — load older posts/replies
+	LoadMore     key.Binding // disabled (legacy key)
 	BlockUser    key.Binding // b — block selected user
 	ManageBlocks key.Binding // B — manage blocked users
 	HidePost     key.Binding // x — hide selected post locally
@@ -51,8 +51,7 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("r", "refresh"),
 		),
 		LoadMore: key.NewBinding(
-			key.WithKeys("n"),
-			key.WithHelp("n", "load more"),
+			key.WithHelp("", ""),
 		),
 		BlockUser: key.NewBinding(
 			key.WithKeys("b"),
