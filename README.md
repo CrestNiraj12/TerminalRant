@@ -11,7 +11,7 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 - Feed tabs:
   - `#terminalrant`
   - `trending`
-  - `personal`
+  - `following` (home timeline from followed users)
   - custom hashtag tab (only shown when custom tag differs from `terminalrant`)
 - Switch tabs with `t` (next) and `T` (previous)
 - Hashtag controls:
@@ -39,6 +39,10 @@ post, reply, edit, and moderate your feed without leaving the terminal.
   - Hidden posts shown in muted style with `HIDDEN` label when revealed
   - Block selected author (`b`) with confirmation
   - Manage blocked users dialog (`B`) and unblock with confirmation
+- Following and profile:
+  - Follow/unfollow selected author (`f`) with confirmation
+  - Followed users are marked with `✓` beside username
+  - Open selected author profile (`z`) to view name, bio, and recent posts
 - Navigation:
   - Feed and detail views with keyboard navigation
   - Detail view supports full-page scrolling for long threads
@@ -118,7 +122,10 @@ Feed:
 - `d` — delete own post (confirmation)
 - `x` / `X` — hide post / toggle hidden posts
 - `b` — block selected post author (confirmation)
+- `f` — follow/unfollow selected post author (confirmation)
 - `B` — blocked users dialog
+- `z` — open selected author profile
+- `Z` — open your own profile
 - `o` — open post URL
 - `g` — open creator GitHub
 - `q` — quit (only when no dialog/detail is open)
@@ -131,6 +138,9 @@ Detail:
 - `r` — refresh thread
 - `l` — like/unlike selected
 - `c` / `C` — reply
+- `f` — follow/unfollow selected author (confirmation)
+- `z` — open selected author profile
+- `Z` — open your own profile
 - `o` — open URL
 - `esc` / `q` — back
 

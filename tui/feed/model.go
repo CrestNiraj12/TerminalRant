@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,24 +37,30 @@ const (
 type RantsLoadedMsg struct {
 	Rants    []domain.Rant
 	QueryKey string
+	RawCount int
+	ReqSeq   int
 }
 
 // RantsErrorMsg is sent when the timeline fetch fails.
 type RantsErrorMsg struct {
 	Err      error
 	QueryKey string
+	ReqSeq   int
 }
 
 // RantsPageLoadedMsg is sent when an older feed page is loaded.
 type RantsPageLoadedMsg struct {
 	Rants    []domain.Rant
 	QueryKey string
+	RawCount int
+	ReqSeq   int
 }
 
 // RantsPageErrorMsg is sent when loading an older feed page fails.
 type RantsPageErrorMsg struct {
 	Err      error
 	QueryKey string
+	ReqSeq   int
 }
 
 type BlockUserMsg struct {
@@ -64,6 +71,19 @@ type BlockUserMsg struct {
 type BlockResultMsg struct {
 	AccountID string
 	Username  string
+	Err       error
+}
+
+type FollowToggleMsg struct {
+	AccountID string
+	Username  string
+	Follow    bool
+}
+
+type FollowToggleResultMsg struct {
+	AccountID string
+	Username  string
+	Follow    bool
 	Err       error
 }
 
@@ -86,6 +106,22 @@ type UnblockUserMsg struct {
 type UnblockResultMsg struct {
 	AccountID string
 	Username  string
+	Err       error
+}
+
+type RelationshipsLoadedMsg struct {
+	Following map[string]bool
+	Err       error
+}
+
+type OpenProfileMsg struct {
+	AccountID string
+}
+
+type ProfileLoadedMsg struct {
+	AccountID string
+	Profile   app.Profile
+	Posts     []domain.Rant
 	Err       error
 }
 
@@ -167,7 +203,7 @@ type feedSource int
 const (
 	sourceTerminalRant feedSource = iota
 	sourceTrending
-	sourcePersonal
+	sourceFollowing
 	sourceCustomHashtag
 )
 
@@ -228,6 +264,7 @@ type RantItem struct {
 // Model holds the state for the feed (timeline) view.
 type Model struct {
 	timeline         app.TimelineService
+	account          app.AccountService
 	defaultHashtag   string
 	hashtag          string
 	feedSource       feedSource
@@ -242,6 +279,7 @@ type Model struct {
 	spinner          spinner.Model
 	confirmDelete    bool // Whether we are in the 'Are you sure?' delete step
 	showDetail       bool // Whether we are in full-post view
+	width            int  // Terminal width
 	height           int  // Terminal height
 	startIndex       int  // First visible item in the list (for scrolling)
 	scrollLine       int  // Line-based scroll for feed viewport
@@ -264,6 +302,12 @@ type Model struct {
 	confirmBlock     bool
 	blockAccountID   string
 	blockUsername    string
+	confirmFollow    bool
+	followAccountID  string
+	followUsername   string
+	followTarget     bool
+	followingByID    map[string]bool
+	followingDirty   bool
 	showBlocked      bool
 	loadingBlocked   bool
 	blockedErr       error
@@ -274,13 +318,22 @@ type Model struct {
 	hashtagInput     bool
 	hashtagBuffer    string
 	detailStart      int
+	showProfile      bool
+	profileIsOwn     bool
+	profileLoading   bool
+	profileErr       error
+	profile          app.Profile
+	profilePosts     []domain.Rant
+	profileCursor    int // 0 for profile card, 1...n for profile posts
+	profileStart     int // first visible profile post
 	showMediaPreview bool
 	mediaPreview     map[string]string
 	mediaLoading     map[string]bool
+	feedReqSeq       int
 }
 
 // New creates a feed model with injected dependencies.
-func New(timeline app.TimelineService, hashtag, initialSource string) Model {
+func New(timeline app.TimelineService, account app.AccountService, hashtag, initialSource string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600"))
@@ -295,6 +348,7 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 
 	return Model{
 		timeline:         timeline,
+		account:          account,
 		defaultHashtag:   "terminalrant",
 		hashtag:          tag,
 		feedSource:       source,
@@ -303,6 +357,7 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 		loading:          true,
 		hasMoreFeed:      true,
 		threadCache:      make(map[string]threadData),
+		followingByID:    make(map[string]bool),
 		hiddenIDs:        make(map[string]bool),
 		hiddenAuthors:    make(map[string]bool),
 		showMediaPreview: true,
@@ -314,14 +369,14 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 // Init starts the initial feed fetch.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		m.fetchRants(),
+		m.fetchRants(m.feedReqSeq),
 		m.spinner.Tick,
 	)
 }
 
 // Refresh returns a Cmd that re-fetches the timeline.
 func (m Model) Refresh() tea.Cmd {
-	return m.fetchRants()
+	return m.fetchRants(m.feedReqSeq)
 }
 
 func openURL(url string) tea.Cmd {
@@ -339,6 +394,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
 		m.height = msg.Height
 		m.ensureFeedCursorVisible()
 		return m, nil
@@ -348,12 +404,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, cmd
 
 	case RantsLoadedMsg:
+		if msg.ReqSeq != m.feedReqSeq {
+			return m, nil
+		}
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
 		// Reconciliation: Merge remote results with inflight optimistic items.
-		newRants := make([]RantItem, len(msg.Rants))
-		for i, r := range msg.Rants {
+		rants := msg.Rants
+		if m.feedSource == sourceFollowing {
+			rants = filterOutOwnRants(rants)
+		}
+		newRants := make([]RantItem, len(rants))
+		for i, r := range rants {
 			newRants[i] = RantItem{Rant: r, Status: StatusNormal}
 		}
 
@@ -397,6 +460,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		m.rants = append(pendingItems, newRants...)
+		m.normalizeFeedOrder()
 		m.loading = false
 		m.loadingMore = false
 		m.err = nil
@@ -404,16 +468,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.oldestFeedID = m.lastFeedID()
 		if m.feedSource == sourceTrending {
 			m.hasMoreFeed = len(msg.Rants) > 0
+		} else if m.feedSource == sourceFollowing {
+			raw := msg.RawCount
+			if raw == 0 {
+				raw = len(msg.Rants)
+			}
+			m.hasMoreFeed = raw == defaultLimit
 		} else {
-			m.hasMoreFeed = len(msg.Rants) == defaultLimit
+			m.hasMoreFeed = len(rants) == defaultLimit
 		}
 		if m.cursor >= len(m.rants) {
 			m.cursor = 0
 		}
+		if m.feedSource == sourceFollowing {
+			m.followingDirty = false
+		}
 		m.ensureFeedCursorVisible()
-		return m, m.ensureMediaPreviewCmd()
+		return m, tea.Batch(m.ensureMediaPreviewCmd(), m.fetchRelationshipsForRants(msg.Rants))
 
 	case RantsErrorMsg:
+		if msg.ReqSeq != m.feedReqSeq {
+			return m, nil
+		}
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
@@ -423,12 +499,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case RantsPageLoadedMsg:
+		if msg.ReqSeq != m.feedReqSeq {
+			return m, nil
+		}
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
 		m.loadingMore = false
 		m.err = nil
-		if len(msg.Rants) == 0 {
+		rants := msg.Rants
+		if m.feedSource == sourceFollowing {
+			rants = filterOutOwnRants(rants)
+		}
+		if len(rants) == 0 && msg.RawCount == 0 {
 			m.hasMoreFeed = false
 			if len(m.rants) > 0 {
 				m.pagingNotice = "🚀 End of the rantverse reached."
@@ -440,20 +523,27 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			existing[ri.Rant.ID] = struct{}{}
 		}
 		added := 0
-		for _, r := range msg.Rants {
+		for _, r := range rants {
 			if _, ok := existing[r.ID]; ok {
 				continue
 			}
 			m.rants = append(m.rants, RantItem{Rant: r, Status: StatusNormal})
 			added++
 		}
+		m.normalizeFeedOrder()
 		m.oldestFeedID = m.lastFeedID()
 		if m.feedSource == sourceTrending {
 			m.hasMoreFeed = added > 0
+		} else if m.feedSource == sourceFollowing {
+			raw := msg.RawCount
+			if raw == 0 {
+				raw = len(msg.Rants)
+			}
+			m.hasMoreFeed = raw == defaultLimit
 		} else {
-			m.hasMoreFeed = len(msg.Rants) == defaultLimit && added > 0
+			m.hasMoreFeed = len(rants) == defaultLimit && added > 0
 		}
-		if added == 0 && len(m.rants) > 0 {
+		if added == 0 && len(m.rants) > 0 && m.feedSource != sourceFollowing {
 			m.hasMoreFeed = false
 			m.pagingNotice = "🚀 End of the rantverse reached."
 		} else if m.hasMoreFeed {
@@ -461,9 +551,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.ensureVisibleCursor()
 		m.ensureFeedCursorVisible()
-		return m, nil
+		return m, m.fetchRelationshipsForRants(msg.Rants)
 
 	case RantsPageErrorMsg:
+		if msg.ReqSeq != m.feedReqSeq {
+			return m, nil
+		}
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
@@ -495,8 +588,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.showDetail = false
 			m.confirmDelete = false
 			m.confirmBlock = false
+			m.confirmFollow = false
 			m.blockAccountID = ""
 			m.blockUsername = ""
+			m.followAccountID = ""
+			m.followUsername = ""
+			m.followTarget = false
 			m.replies = nil
 			m.replyAll = nil
 			m.replyVisible = 0
@@ -514,6 +611,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.blockedCursor = 0
 			m.confirmUnblock = false
 			m.unblockTarget = app.BlockedUser{}
+			m.showProfile = false
+			m.profileIsOwn = false
+			m.profileLoading = false
+			m.profileErr = nil
+			m.profile = app.Profile{}
+			m.profilePosts = nil
+			m.profileCursor = 0
+			m.profileStart = 0
 		}
 		return m, nil
 
@@ -557,7 +662,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.ancestors = msg.Ancestors
 		m.loadingReplies = false
 		m.ensureDetailCursorVisible()
-		return m, m.ensureMediaPreviewCmd()
+		all := append([]domain.Rant{}, msg.Ancestors...)
+		all = append(all, replies...)
+		return m, tea.Batch(m.ensureMediaPreviewCmd(), m.fetchRelationshipsForRants(all))
 
 	case ThreadErrorMsg:
 		if msg.ID != m.currentThreadRootID() {
@@ -592,6 +699,72 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.hiddenAuthors[msg.AccountID] = true
 			m.ensureVisibleCursor()
 			m.ensureFeedCursorVisible()
+		}
+		return m, nil
+
+	case RelationshipsLoadedMsg:
+		if msg.Err != nil {
+			return m, nil
+		}
+		for id, following := range msg.Following {
+			m.followingByID[id] = following
+		}
+		return m, nil
+
+	case ProfileLoadedMsg:
+		m.profileLoading = false
+		m.profileErr = msg.Err
+		if msg.Err != nil {
+			return m, nil
+		}
+		m.profile = msg.Profile
+		m.profilePosts = msg.Posts
+		m.profileCursor = 0
+		m.profileStart = 0
+		m.ensureProfileCursorVisible()
+		if msg.Profile.ID != "" {
+			// Best-effort local relationship hydration for profile header.
+			if following, ok := m.followingByID[msg.Profile.ID]; ok {
+				_ = following
+			}
+		}
+		return m, m.fetchRelationshipsForRants(msg.Posts)
+
+	case FollowToggleResultMsg:
+		m.confirmFollow = false
+		m.followAccountID = ""
+		m.followUsername = ""
+		if msg.Err != nil {
+			return m, nil
+		}
+		if strings.TrimSpace(msg.AccountID) != "" {
+			m.followingByID[msg.AccountID] = msg.Follow
+			if m.showProfile && m.profile.ID == msg.AccountID {
+				if msg.Follow {
+					m.profile.Followers++
+				} else if m.profile.Followers > 0 {
+					m.profile.Followers--
+				}
+			}
+		}
+		m.followingDirty = true
+		if !msg.Follow {
+			// Immediately hide unfollowed authors from the Following tab.
+			m.ensureVisibleCursor()
+			m.ensureFeedCursorVisible()
+		}
+		if m.feedSource == sourceFollowing {
+			m.rants = nil
+			m.cursor = 0
+			m.startIndex = 0
+			m.scrollLine = 0
+			m.oldestFeedID = ""
+			m.hasMoreFeed = true
+			m.loading = true
+			m.loadingMore = false
+			m.pagingNotice = ""
+			m.feedReqSeq++
+			return m, m.fetchRants(m.feedReqSeq)
 		}
 		return m, nil
 
@@ -695,7 +868,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		} else {
 			if msg.Rant.InReplyToID != "" && msg.Rant.InReplyToID != "<nil>" && msg.Rant.InReplyToID != "0" {
-				m.reconcileReplyResult(msg.Rant)
+				m.reconcileReplyResult(msg.ID, msg.Rant)
 				return m, nil
 			}
 			// Success: replace optimistic item with server version.
@@ -749,6 +922,116 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.showProfile {
+			if m.confirmFollow && msg.String() != "y" && msg.String() != "n" {
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+			}
+			switch {
+			case msg.String() == "esc" || msg.String() == "q":
+				m.showProfile = false
+				m.profileIsOwn = false
+				m.profileLoading = false
+				m.profileErr = nil
+				m.profile = app.Profile{}
+				m.profilePosts = nil
+				m.profileCursor = 0
+				m.profileStart = 0
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+				return m, nil
+			case key.Matches(msg, m.keys.Up):
+				if m.profileCursor > 0 {
+					m.profileCursor--
+				}
+				m.ensureProfileCursorVisible()
+				return m, nil
+			case key.Matches(msg, m.keys.Down):
+				if m.profileCursor < len(m.profilePosts) {
+					m.profileCursor++
+				}
+				m.ensureProfileCursorVisible()
+				return m, nil
+			case key.Matches(msg, m.keys.FollowUser):
+				if strings.TrimSpace(m.profile.ID) == "" || m.profileIsOwn {
+					return m, nil
+				}
+				already := m.followingByID[m.profile.ID]
+				if already {
+					// Unfollow requires confirmation.
+					m.confirmFollow = true
+					m.followAccountID = m.profile.ID
+					m.followUsername = m.profile.Username
+					m.followTarget = false
+					return m, nil
+				}
+				// Follow immediately.
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+				accountID := m.profile.ID
+				username := m.profile.Username
+				return m, func() tea.Msg {
+					return FollowToggleMsg{AccountID: accountID, Username: username, Follow: true}
+				}
+			case key.Matches(msg, m.keys.ManageBlocks):
+				m.showBlocked = true
+				m.loadingBlocked = true
+				m.blockedErr = nil
+				m.blockedUsers = nil
+				m.blockedCursor = 0
+				m.confirmUnblock = false
+				m.unblockTarget = app.BlockedUser{}
+				return m, func() tea.Msg { return RequestBlockedUsersMsg{} }
+			case msg.String() == "enter":
+				if m.profileCursor > 0 && m.profileCursor <= len(m.profilePosts) {
+					target := m.profilePosts[m.profileCursor-1]
+					m.showProfile = false
+					m.profileIsOwn = false
+					m.setCursorByID(target.ID)
+					m.showDetail = true
+					m.detailCursor = 0
+					m.detailStart = 0
+					m.detailScrollLine = 0
+					m.replies = nil
+					m.replyAll = nil
+					m.replyVisible = 0
+					m.hasMoreReplies = false
+					m.ancestors = nil
+					m.loadingReplies = true
+					m.focusedRant = nil
+					m.viewStack = nil
+					return m, m.loadThreadFromCacheOrFetch(target.ID)
+				}
+				return m, nil
+			case msg.String() == "y":
+				if m.confirmFollow && m.followAccountID != "" {
+					accountID := m.followAccountID
+					username := m.followUsername
+					follow := m.followTarget
+					return m, func() tea.Msg {
+						return FollowToggleMsg{
+							AccountID: accountID,
+							Username:  username,
+							Follow:    follow,
+						}
+					}
+				}
+				return m, nil
+			case msg.String() == "n":
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.showBlocked {
 			switch {
 			case msg.String() == "esc" || msg.String() == "q":
@@ -792,6 +1075,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.confirmFollow && msg.String() != "y" && msg.String() != "n" && msg.String() != "q" && msg.String() != "esc" {
+			m.confirmFollow = false
+			m.followAccountID = ""
+			m.followUsername = ""
+			m.followTarget = false
+		}
 		if m.hashtagInput {
 			switch msg.String() {
 			case "esc":
@@ -814,10 +1103,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.hashtagBuffer = ""
 				m.prepareSourceChange()
 				m.pagingNotice = "Switched to #" + tag
-				return m, tea.Batch(
-					m.fetchRants(),
-					m.emitPrefsChanged(),
-				)
+			m.feedReqSeq++
+			return m, tea.Batch(
+				m.fetchRants(m.feedReqSeq),
+				m.emitPrefsChanged(),
+			)
 			case "backspace":
 				if len(m.hashtagBuffer) > 0 {
 					r := []rune(m.hashtagBuffer)
@@ -867,12 +1157,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.pagingNotice = "Feed: #terminalrant"
 			case sourceTrending:
 				m.pagingNotice = "Feed: trending"
-			case sourcePersonal:
-				m.pagingNotice = "Feed: personal"
+			case sourceFollowing:
+				m.pagingNotice = "Feed: following"
 			case sourceCustomHashtag:
 				m.pagingNotice = "Feed: #" + m.hashtag
 			}
-			return m, tea.Batch(m.fetchRants(), m.emitPrefsChanged())
+			m.feedReqSeq++
+			return m, tea.Batch(m.fetchRants(m.feedReqSeq), m.emitPrefsChanged())
 
 		case msg.String() == "T":
 			if m.showDetail {
@@ -890,12 +1181,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.pagingNotice = "Feed: #terminalrant"
 			case sourceTrending:
 				m.pagingNotice = "Feed: trending"
-			case sourcePersonal:
-				m.pagingNotice = "Feed: personal"
+			case sourceFollowing:
+				m.pagingNotice = "Feed: following"
 			case sourceCustomHashtag:
 				m.pagingNotice = "Feed: #" + m.hashtag
 			}
-			return m, tea.Batch(m.fetchRants(), m.emitPrefsChanged())
+			m.feedReqSeq++
+			return m, tea.Batch(m.fetchRants(m.feedReqSeq), m.emitPrefsChanged())
 
 		case key.Matches(msg, m.keys.SetHashtag):
 			if m.showDetail {
@@ -964,7 +1256,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.hasMoreFeed = true
 			m.oldestFeedID = ""
 			m.pagingNotice = ""
-			return m, m.fetchRants()
+			m.feedReqSeq++
+			return m, m.fetchRants(m.feedReqSeq)
 
 		case key.Matches(msg, m.keys.Up):
 			if m.showDetail {
@@ -1001,7 +1294,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.ensureFeedCursorVisible()
 			if !m.loading && len(m.rants) > 0 && m.oldestFeedID != "" && m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
 				m.loadingMore = true
-				return m, tea.Batch(m.fetchOlderRants(), m.ensureMediaPreviewCmd())
+				m.feedReqSeq++
+				return m, tea.Batch(m.fetchOlderRants(m.feedReqSeq), m.ensureMediaPreviewCmd())
 			}
 			return m, m.ensureMediaPreviewCmd()
 
@@ -1012,10 +1306,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.ensureMediaPreviewCmd()
 			}
 			m.showDetail = false
+			m.showProfile = false
+			m.profileIsOwn = false
 			m.confirmDelete = false
 			m.confirmBlock = false
+			m.confirmFollow = false
 			m.blockAccountID = ""
 			m.blockUsername = ""
+			m.followAccountID = ""
+			m.followUsername = ""
+			m.followTarget = false
 			m.cursor = 0
 			m.startIndex = 0
 			m.scrollLine = 0
@@ -1074,6 +1374,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.blockUsername = ""
 				return m, nil
 			}
+			if m.confirmFollow {
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+				return m, nil
+			}
 			if m.showDetail {
 				m.loadMoreReplies()
 				return m, nil
@@ -1091,7 +1398,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			if m.hasMoreFeed && m.oldestFeedID != "" {
 				m.loadingMore = true
-				return m, m.fetchOlderRants()
+				m.feedReqSeq++
+				return m, m.fetchOlderRants(m.feedReqSeq)
 			}
 			return m, nil
 
@@ -1159,6 +1467,47 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.blockUsername = r.Username
 			return m, nil
 
+		case key.Matches(msg, m.keys.FollowUser):
+			r := m.getSelectedRant()
+			if r.AccountID == "" || r.IsOwn {
+				m.pagingNotice = "Cannot follow this user."
+				break
+			}
+			m.confirmFollow = true
+			m.followAccountID = r.AccountID
+			m.followUsername = r.Username
+			m.followTarget = !m.isFollowing(r.AccountID)
+			m.confirmBlock = false
+			m.blockAccountID = ""
+			m.blockUsername = ""
+			return m, nil
+
+		case key.Matches(msg, m.keys.OpenProfile):
+			r := m.getSelectedRant()
+			if strings.TrimSpace(r.AccountID) == "" {
+				break
+			}
+			m.showProfile = true
+			m.profileIsOwn = r.IsOwn
+			m.profileLoading = true
+			m.profileErr = nil
+			m.profile = app.Profile{}
+			m.profilePosts = nil
+			m.profileCursor = 0
+			m.profileStart = 0
+			return m, m.fetchProfile(r.AccountID)
+
+		case key.Matches(msg, m.keys.OpenOwnProfile):
+			m.showProfile = true
+			m.profileIsOwn = true
+			m.profileLoading = true
+			m.profileErr = nil
+			m.profile = app.Profile{}
+			m.profilePosts = nil
+			m.profileCursor = 0
+			m.profileStart = 0
+			return m, m.fetchOwnProfile()
+
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
 				break
@@ -1173,6 +1522,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.confirmBlock = false
 				m.blockAccountID = ""
 				m.blockUsername = ""
+				return m, nil
+			}
+			if m.confirmFollow {
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
 				return m, nil
 			}
 			if m.showDetail {
@@ -1228,6 +1584,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.blockUsername = ""
 				return m, func() tea.Msg { return BlockUserMsg{AccountID: accountID, Username: username} }
 			}
+			if m.confirmFollow && m.followAccountID != "" {
+				accountID := m.followAccountID
+				username := m.followUsername
+				follow := m.followTarget
+				return m, func() tea.Msg {
+					return FollowToggleMsg{AccountID: accountID, Username: username, Follow: follow}
+				}
+			}
 		case msg.String() == "n":
 			if m.confirmDelete {
 				m.confirmDelete = false
@@ -1236,6 +1600,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.confirmBlock = false
 				m.blockAccountID = ""
 				m.blockUsername = ""
+			}
+			if m.confirmFollow {
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
 			}
 		case msg.String() == "u":
 			if !m.showDetail {
@@ -1292,7 +1662,7 @@ type DeleteRantMsg struct {
 	ID string
 }
 
-func (m Model) fetchRants() tea.Cmd {
+func (m Model) fetchRants(reqSeq int) tea.Cmd {
 	timeline := m.timeline
 	hashtag := m.hashtag
 	defaultHashtag := m.defaultHashtag
@@ -1310,13 +1680,13 @@ func (m Model) fetchRants() tea.Cmd {
 			rants, err = timeline.FetchByHashtag(context.Background(), hashtag, defaultLimit)
 		case sourceTrending:
 			rants, err = timeline.FetchTrendingPage(context.Background(), defaultLimit, "")
-		case sourcePersonal:
+		case sourceFollowing:
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, "")
 		}
 		if err != nil {
-			return RantsErrorMsg{Err: err, QueryKey: queryKey}
+			return RantsErrorMsg{Err: err, QueryKey: queryKey, ReqSeq: reqSeq}
 		}
-		return RantsLoadedMsg{Rants: rants, QueryKey: queryKey}
+		return RantsLoadedMsg{Rants: rants, QueryKey: queryKey, RawCount: len(rants), ReqSeq: reqSeq}
 	}
 }
 
@@ -1438,7 +1808,7 @@ func renderANSIThumbnail(img image.Image, w, h int) string {
 	return out.String()
 }
 
-func (m Model) fetchOlderRants() tea.Cmd {
+func (m Model) fetchOlderRants(reqSeq int) tea.Cmd {
 	if m.loading || !m.hasMoreFeed || m.oldestFeedID == "" {
 		return nil
 	}
@@ -1460,13 +1830,99 @@ func (m Model) fetchOlderRants() tea.Cmd {
 			rants, err = timeline.FetchByHashtagPage(context.Background(), hashtag, defaultLimit, maxID)
 		case sourceTrending:
 			rants, err = timeline.FetchTrendingPage(context.Background(), defaultLimit, maxID)
-		case sourcePersonal:
+		case sourceFollowing:
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, maxID)
 		}
 		if err != nil {
-			return RantsPageErrorMsg{Err: err, QueryKey: queryKey}
+			return RantsPageErrorMsg{Err: err, QueryKey: queryKey, ReqSeq: reqSeq}
 		}
-		return RantsPageLoadedMsg{Rants: rants, QueryKey: queryKey}
+		return RantsPageLoadedMsg{Rants: rants, QueryKey: queryKey, RawCount: len(rants), ReqSeq: reqSeq}
+	}
+}
+
+func filterOutOwnRants(in []domain.Rant) []domain.Rant {
+	if len(in) == 0 {
+		return in
+	}
+	out := make([]domain.Rant, 0, len(in))
+	for _, r := range in {
+		if r.IsOwn {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func (m Model) fetchRelationshipsForRants(rants []domain.Rant) tea.Cmd {
+	if m.account == nil || len(rants) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(rants))
+	seen := make(map[string]struct{}, len(rants))
+	for _, r := range rants {
+		id := strings.TrimSpace(r.AccountID)
+		if id == "" || r.IsOwn {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	acct := m.account
+	return func() tea.Msg {
+		following, err := acct.LookupFollowing(context.Background(), ids)
+		return RelationshipsLoadedMsg{Following: following, Err: err}
+	}
+}
+
+func (m Model) fetchProfile(accountID string) tea.Cmd {
+	if m.account == nil || strings.TrimSpace(accountID) == "" {
+		return nil
+	}
+	acct := m.account
+	accountID = strings.TrimSpace(accountID)
+	return func() tea.Msg {
+		profile, err := acct.ProfileByID(context.Background(), accountID)
+		if err != nil {
+			return ProfileLoadedMsg{AccountID: accountID, Err: err}
+		}
+		posts, err := acct.PostsByAccount(context.Background(), accountID, defaultLimit, "")
+		if err != nil {
+			return ProfileLoadedMsg{AccountID: accountID, Err: err}
+		}
+		return ProfileLoadedMsg{
+			AccountID: accountID,
+			Profile:   profile,
+			Posts:     posts,
+		}
+	}
+}
+
+func (m Model) fetchOwnProfile() tea.Cmd {
+	if m.account == nil {
+		return nil
+	}
+	acct := m.account
+	return func() tea.Msg {
+		profile, err := acct.CurrentProfile(context.Background())
+		if err != nil {
+			return ProfileLoadedMsg{Err: err}
+		}
+		posts, err := acct.PostsByAccount(context.Background(), profile.ID, defaultLimit, "")
+		if err != nil {
+			return ProfileLoadedMsg{AccountID: profile.ID, Err: err}
+		}
+		return ProfileLoadedMsg{
+			AccountID: profile.ID,
+			Profile:   profile,
+			Posts:     posts,
+		}
 	}
 }
 
@@ -1518,6 +1974,20 @@ func (m Model) currentThreadRootID() string {
 	return m.rants[m.cursor].Rant.ID
 }
 
+func (m *Model) normalizeFeedOrder() {
+	if len(m.rants) < 2 {
+		return
+	}
+	sort.SliceStable(m.rants, func(i, j int) bool {
+		ti := m.rants[i].Rant.CreatedAt
+		tj := m.rants[j].Rant.CreatedAt
+		if ti.Equal(tj) {
+			return m.rants[i].Rant.ID > m.rants[j].Rant.ID
+		}
+		return ti.After(tj)
+	})
+}
+
 func minInt(a, b int) int {
 	if a < b {
 		return a
@@ -1526,13 +1996,41 @@ func minInt(a, b int) int {
 }
 
 func (m Model) feedViewportHeight() int {
-	// Reserve stable room for header, footer, and status/help rows.
-	const reserved = 13
-	h := m.height - reserved
-	if h < 8 {
-		h = 8
+	h := m.height - m.feedChromeLines()
+	// App-level status/confirm bars are rendered outside feed.View().
+	h -= 2
+	if h < 4 {
+		h = 4
 	}
 	return h
+}
+
+func (m Model) feedChromeLines() int {
+	lineCount := func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(s, "\n") + 1
+	}
+
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant") + common.TaglineStyle.Render("<Why leave terminal to rant!!>")
+	top := lineCount(title) + lineCount(m.renderTabs()) + 1 // trailing blank line under tabs
+
+	bottom := 1 // spacer line before status/help block
+	if m.loading && len(m.rants) > 0 {
+		bottom++
+	} else if m.loadingMore {
+		bottom++
+	}
+	if m.pagingNotice != "" && len(m.rants) > 0 {
+		bottom++
+	}
+	if m.hashtagInput {
+		bottom++
+	}
+	bottom += lineCount(m.helpView())
+
+	return top + bottom
 }
 
 func (m *Model) ensureFeedCursorVisible() {
@@ -1623,8 +2121,8 @@ func (m Model) currentFeedQueryKey() string {
 	switch m.feedSource {
 	case sourceTrending:
 		return "trending"
-	case sourcePersonal:
-		return "personal"
+	case sourceFollowing:
+		return "following"
 	case sourceCustomHashtag:
 		return "tag:" + strings.ToLower(strings.TrimSpace(m.hashtag))
 	default:
@@ -1869,6 +2367,50 @@ func (m Model) detailReplySlots() int {
 	return slots
 }
 
+func (m *Model) ensureProfileCursorVisible() {
+	if !m.showProfile {
+		m.profileStart = 0
+		return
+	}
+	if m.profileCursor <= 0 {
+		m.profileStart = 0
+		return
+	}
+	slots := m.profilePostSlots()
+	if slots < 1 {
+		slots = 1
+	}
+	idx := m.profileCursor - 1
+	if idx < m.profileStart {
+		m.profileStart = idx
+	}
+	if idx >= m.profileStart+slots {
+		m.profileStart = idx - slots + 1
+	}
+	maxStart := len(m.profilePosts) - slots
+	if maxStart < 0 {
+		maxStart = 0
+	}
+	if m.profileStart > maxStart {
+		m.profileStart = maxStart
+	}
+	if m.profileStart < 0 {
+		m.profileStart = 0
+	}
+}
+
+func (m Model) profilePostSlots() int {
+	h := m.height - 30
+	if h < 20 {
+		h = 20
+	}
+	slots := h / 5
+	if slots < 4 {
+		slots = 4
+	}
+	return slots
+}
+
 func (m Model) belongsToCurrentThread(parentID string) bool {
 	if parentID == "" {
 		return false
@@ -1905,10 +2447,14 @@ func (m Model) belongsToCurrentThread(parentID string) bool {
 	return false
 }
 
-func (m *Model) reconcileReplyResult(server domain.Rant) {
+func (m *Model) reconcileReplyResult(localID string, server domain.Rant) {
 	replace := func(list []domain.Rant) ([]domain.Rant, bool) {
 		for i := range list {
 			if list[i].ID == server.ID {
+				list[i] = server
+				return list, true
+			}
+			if strings.TrimSpace(localID) != "" && list[i].ID == localID {
 				list[i] = server
 				return list, true
 			}
@@ -1943,12 +2489,34 @@ type AddOptimisticReplyMsg struct {
 func (m Model) visibleIndices() []int {
 	indices := make([]int, 0, len(m.rants))
 	for i, ri := range m.rants {
-		if m.isHiddenRant(ri.Rant) {
+		if !m.isVisibleInFeed(ri.Rant) {
 			continue
 		}
 		indices = append(indices, i)
 	}
 	return indices
+}
+
+func (m Model) isVisibleInFeed(r domain.Rant) bool {
+	if m.isHiddenRant(r) {
+		return false
+	}
+	if m.feedSource != sourceFollowing {
+		return true
+	}
+	if r.IsOwn {
+		return false
+	}
+	id := strings.TrimSpace(r.AccountID)
+	if id == "" {
+		return true
+	}
+	following, known := m.followingByID[id]
+	if !known {
+		// Keep it visible until relationship hydration arrives.
+		return true
+	}
+	return following
 }
 
 func (m *Model) ensureVisibleCursor() {
@@ -1965,17 +2533,17 @@ func (m *Model) ensureVisibleCursor() {
 	if m.showHidden {
 		return
 	}
-	if !m.isHiddenRant(m.rants[m.cursor].Rant) {
+	if m.isVisibleInFeed(m.rants[m.cursor].Rant) {
 		return
 	}
 	for i := m.cursor + 1; i < len(m.rants); i++ {
-		if !m.isHiddenRant(m.rants[i].Rant) {
+		if m.isVisibleInFeed(m.rants[i].Rant) {
 			m.cursor = i
 			return
 		}
 	}
 	for i := m.cursor - 1; i >= 0; i-- {
-		if !m.isHiddenRant(m.rants[i].Rant) {
+		if m.isVisibleInFeed(m.rants[i].Rant) {
 			m.cursor = i
 			return
 		}
@@ -1997,7 +2565,7 @@ func (m *Model) moveCursorVisible(delta int) {
 			return
 		}
 		m.cursor = next
-		if m.showHidden || !m.isHiddenRant(m.rants[m.cursor].Rant) {
+		if m.isVisibleInFeed(m.rants[m.cursor].Rant) {
 			return
 		}
 	}
@@ -2011,10 +2579,18 @@ func (m Model) selectedVisibleRant() (domain.Rant, bool) {
 		return domain.Rant{}, false
 	}
 	r := m.rants[m.cursor].Rant
-	if m.isHiddenRant(r) {
+	if !m.isVisibleInFeed(r) {
 		return domain.Rant{}, false
 	}
 	return r, true
+}
+
+func (m Model) isFollowing(accountID string) bool {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return false
+	}
+	return m.followingByID[accountID]
 }
 
 func (m Model) sourceLabel() string {
@@ -2023,8 +2599,8 @@ func (m Model) sourceLabel() string {
 		return "#terminalrant"
 	case sourceTrending:
 		return "trending"
-	case sourcePersonal:
-		return "personal"
+	case sourceFollowing:
+		return "following"
 	case sourceCustomHashtag:
 		return "#" + m.hashtag
 	default:
@@ -2036,8 +2612,8 @@ func (m Model) sourcePersistValue() string {
 	switch m.feedSource {
 	case sourceTrending:
 		return "trending"
-	case sourcePersonal:
-		return "personal"
+	case sourceFollowing:
+		return "following"
 	case sourceCustomHashtag:
 		return "custom"
 	default:
@@ -2049,8 +2625,10 @@ func parseFeedSource(v string) feedSource {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "trending":
 		return sourceTrending
-	case "personal":
-		return sourcePersonal
+	case "following":
+		return sourceFollowing
+	case "personal": // migration from older saved state
+		return sourceFollowing
 	case "custom":
 		return sourceCustomHashtag
 	default:
@@ -2096,7 +2674,7 @@ func (m Model) IsInDetailView() bool {
 
 // IsDialogOpen reports whether a modal/overlay should capture quit/back keys.
 func (m Model) IsDialogOpen() bool {
-	return m.showAllHints || m.showBlocked || m.hashtagInput || m.confirmBlock || m.confirmDelete
+	return m.showAllHints || m.showBlocked || m.showProfile || m.hashtagInput || m.confirmBlock || m.confirmDelete || m.confirmFollow
 }
 
 // SelectedRant returns the currently highlighted rant, if any.

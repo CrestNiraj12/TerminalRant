@@ -53,7 +53,7 @@ func NewApp(deps Deps) App {
 	return App{
 		deps:   deps,
 		active: feedView,
-		feed:   feed.New(deps.Timeline, deps.Hashtag, deps.FeedView),
+		feed:   feed.New(deps.Timeline, deps.Account, deps.Hashtag, deps.FeedView),
 		keys:   common.DefaultKeyMap(),
 	}
 }
@@ -118,7 +118,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// View-specific key bindings.
-		if a.active == feedView {
+		// When feed is in a modal/input state (e.g. hashtag input), let feed handle all keys.
+		if a.active == feedView && !a.feed.IsDialogOpen() {
 			if key.Matches(msg, a.keys.EditProfile) {
 				return a, a.loadProfileForEdit()
 			}
@@ -208,6 +209,39 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.status = "Blocked @" + msg.Username + ". Their posts are hidden."
 		}
 		return a, nil
+
+	case feed.FollowToggleMsg:
+		verb := "Following"
+		if !msg.Follow {
+			verb = "Unfollowing"
+		}
+		a.status = verb + " @" + msg.Username + "..."
+		return a, func() tea.Msg {
+			var err error
+			if msg.Follow {
+				err = a.deps.Account.FollowUser(context.Background(), msg.AccountID)
+			} else {
+				err = a.deps.Account.UnfollowUser(context.Background(), msg.AccountID)
+			}
+			return feed.FollowToggleResultMsg{
+				AccountID: msg.AccountID,
+				Username:  msg.Username,
+				Follow:    msg.Follow,
+				Err:       err,
+			}
+		}
+
+	case feed.FollowToggleResultMsg:
+		var cmd tea.Cmd
+		a.feed, cmd = a.feed.Update(msg)
+		if msg.Err != nil {
+			a.status = "Follow update failed: " + msg.Err.Error()
+		} else if msg.Follow {
+			a.status = "Following @" + msg.Username
+		} else {
+			a.status = "Unfollowed @" + msg.Username
+		}
+		return a, cmd
 
 	case feed.RequestBlockedUsersMsg:
 		return a, func() tea.Msg {

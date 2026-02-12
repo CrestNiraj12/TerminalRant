@@ -1,12 +1,19 @@
 package app
 
-import "context"
+import (
+	"context"
+
+	"terminalrant/domain"
+)
 
 type Profile struct {
 	ID          string
 	Username    string
 	DisplayName string
 	Bio         string
+	PostsCount  int
+	Followers   int
+	Following   int
 }
 
 type BlockedUser struct {
@@ -34,4 +41,19 @@ type AccountService interface {
 
 	// UnblockUser unblocks a user by account ID.
 	UnblockUser(ctx context.Context, accountID string) error
+
+	// FollowUser follows a user by account ID.
+	FollowUser(ctx context.Context, accountID string) error
+
+	// UnfollowUser unfollows a user by account ID.
+	UnfollowUser(ctx context.Context, accountID string) error
+
+	// LookupFollowing returns follow-state for account IDs.
+	LookupFollowing(ctx context.Context, accountIDs []string) (map[string]bool, error)
+
+	// ProfileByID returns profile details for a specific account.
+	ProfileByID(ctx context.Context, accountID string) (Profile, error)
+
+	// PostsByAccount returns posts for an account, newest first.
+	PostsByAccount(ctx context.Context, accountID string, limit int, maxID string) ([]domain.Rant, error)
 }

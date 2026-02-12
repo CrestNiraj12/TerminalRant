@@ -17,6 +17,17 @@ import (
 func (m Model) View() string {
 	var b strings.Builder
 
+	if m.showProfile {
+		base := m.renderProfileView()
+		if m.showBlocked {
+			base += "\n\n" + m.renderBlockedUsersDialog()
+		}
+		if m.showAllHints {
+			base += "\n\n" + m.renderKeyDialog()
+		}
+		return base
+	}
+
 	// If in detail view, render it exclusively (or as an overlay)
 	if m.showDetail {
 		base := m.renderDetailView()
@@ -45,17 +56,50 @@ func (m Model) View() string {
 		b.WriteString(common.ErrorStyle.Render(fmt.Sprintf("  Error: %v", m.err)))
 		b.WriteString("\n\n  Press r to retry.\n")
 	} else if len(m.rants) == 0 {
-		b.WriteString("  No rants yet. Be the first!\n")
+		b.WriteString("  " + m.emptyFeedMessage(false) + "\n")
 	} else {
-		var listBuilder strings.Builder
 		visibleIndices := m.visibleIndices()
+		if len(visibleIndices) == 0 {
+			b.WriteString("  " + m.emptyFeedMessage(true) + "\n")
+			b.WriteString("\n")
+			if m.loading && len(m.rants) > 0 {
+				b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
+			} else if m.loadingMore {
+				b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
+			}
+			if m.pagingNotice != "" && len(m.rants) > 0 {
+				b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
+				b.WriteString("\n")
+			}
+			if m.hashtagInput {
+				b.WriteString(
+					lipgloss.NewStyle().
+						Foreground(lipgloss.Color("#111111")).
+						Background(lipgloss.Color("#FFB454")).
+						Bold(true).
+						Padding(0, 1).
+						Render(" Set hashtag: #" + m.hashtagBuffer + " (enter: apply, esc: cancel) "),
+				)
+				b.WriteString("\n")
+			}
+			b.WriteString(m.helpView())
+			base := b.String()
+			if m.showBlocked {
+				base += "\n\n" + m.renderBlockedUsersDialog()
+			}
+			if m.showAllHints {
+				base += "\n\n" + m.renderKeyDialog()
+			}
+			return base
+		}
+		var listBuilder strings.Builder
 		type lineRange struct{ top, bottom int }
 		itemRanges := make(map[int]lineRange, len(visibleIndices))
 		lineCursor := 0
 		for _, i := range visibleIndices {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
-			author := renderAuthor(rant.Username, rant.IsOwn)
+			author := renderAuthor(rant.Username, rant.IsOwn, m.isFollowing(rant.AccountID))
 			if rant.IsOwn {
 				author += common.OwnBadgeStyle.Render("(you)")
 			}
@@ -146,6 +190,13 @@ func (m Model) View() string {
 				if m.confirmBlock {
 					itemContent += "\n" + common.ConfirmStyle.Render(fmt.Sprintf("  Block @%s? (y/n)", m.blockUsername))
 				}
+				if m.confirmFollow {
+					action := "Follow"
+					if !m.followTarget {
+						action = "Unfollow"
+					}
+					itemContent += "\n" + common.ConfirmStyle.Render(fmt.Sprintf("  %s @%s? (y/n)", action, m.followUsername))
+				}
 			} else {
 				if isHiddenMarked {
 					itemContent = lipgloss.NewStyle().Foreground(lipgloss.Color("#8A8A8A")).Faint(true).Render(itemContent)
@@ -161,31 +212,35 @@ func (m Model) View() string {
 		}
 
 		listString := strings.TrimSuffix(listBuilder.String(), "\n")
-		if strings.TrimSpace(listString) == "" {
-			listString = "  No visible posts. Press X to show hidden posts."
-		}
 		listLines := strings.Split(listString, "\n")
 		viewHeight := m.feedViewportHeight()
-		// Center-anchor scrolling: keep selected item near viewport center.
+		scroll := m.scrollLine
+		if scroll < 0 {
+			scroll = 0
+		}
+		// Keep selected post fully visible. Scroll only at viewport edges.
 		if lr, ok := itemRanges[m.cursor]; ok {
-			selectedMid := (lr.top + lr.bottom) / 2
-			m.scrollLine = selectedMid - (viewHeight / 2)
+			if lr.top < scroll {
+				scroll = lr.top
+			} else if lr.bottom >= scroll+viewHeight {
+				scroll = lr.bottom - viewHeight + 1
+			}
 		}
 		maxScroll := len(listLines) - viewHeight
 		if maxScroll < 0 {
 			maxScroll = 0
 		}
-		if m.scrollLine > maxScroll {
-			m.scrollLine = maxScroll
+		if scroll > maxScroll {
+			scroll = maxScroll
 		}
-		if m.scrollLine < 0 {
-			m.scrollLine = 0
+		if scroll < 0 {
+			scroll = 0
 		}
-		end := m.scrollLine + viewHeight
+		end := scroll + viewHeight
 		if end > len(listLines) {
 			end = len(listLines)
 		}
-		visible := listLines[m.scrollLine:end]
+		visible := listLines[scroll:end]
 		for len(visible) < viewHeight {
 			visible = append(visible, "")
 		}
@@ -194,7 +249,7 @@ func (m Model) View() string {
 		for i := range gutter {
 			gutter[i] = " "
 		}
-		if m.scrollLine > 0 && len(gutter) > 0 {
+		if scroll > 0 && len(gutter) > 0 {
 			gutter[0] = markerStyle.Render("▲")
 		}
 		if end < len(listLines) && len(gutter) > 0 {
@@ -306,11 +361,18 @@ func (m Model) renderDetailView() string {
 		Width(74)
 
 	var cardContent strings.Builder
-	headerAuthor := renderAuthor(r.Username, r.IsOwn)
+	headerAuthor := renderAuthor(r.Username, r.IsOwn, m.isFollowing(r.AccountID))
 	if r.IsOwn {
 		headerAuthor += common.OwnBadgeStyle.Render("(you)")
 	}
 	cardContent.WriteString(headerAuthor + " " + common.MetadataStyle.Render("("+r.Author+")") + "\n")
+	if m.confirmFollow {
+		action := "Follow"
+		if !m.followTarget {
+			action = "Unfollow"
+		}
+		cardContent.WriteString(common.ConfirmStyle.Render(fmt.Sprintf("%s @%s? (y/n)", action, m.followUsername)) + "\n")
+	}
 	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n")
 
 	// Parent Context inside card (minimalist)
@@ -419,7 +481,7 @@ func (m Model) renderDetailView() string {
 			MarginLeft(2).
 			Width(74).
 			Render(fmt.Sprintf("%s %s\n%s",
-				renderAuthor(parent.Username, parent.IsOwn),
+				renderAuthor(parent.Username, parent.IsOwn, m.isFollowing(parent.AccountID)),
 				common.TimestampStyle.Render(parent.CreatedAt.Format("Jan 02")),
 				common.ContentStyle.Render(parentSummary)))
 
@@ -451,7 +513,7 @@ func (m Model) renderDetailView() string {
 				}
 			}
 
-			author := renderAuthor(r.Username, r.IsOwn)
+			author := renderAuthor(r.Username, r.IsOwn, m.isFollowing(r.AccountID))
 			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
 			replyContentClean, _ := splitContentAndTags(r.Content)
 			if strings.TrimSpace(replyContentClean) == "" && len(r.Media) > 0 {
@@ -502,14 +564,51 @@ func (m Model) renderDetailView() string {
 	return m.renderDetailViewport(b.String())
 }
 
+func (m Model) emptyFeedMessage(hadData bool) string {
+	switch m.feedSource {
+	case sourceFollowing:
+		if hadData {
+			return "No posts from people you follow."
+		}
+		return "No posts from people you follow yet."
+	case sourceTrending:
+		return "Trending is quiet right now."
+	case sourceCustomHashtag:
+		tag := strings.TrimSpace(strings.TrimPrefix(m.hashtag, "#"))
+		if tag == "" {
+			tag = m.defaultHashtag
+		}
+		return fmt.Sprintf("No posts found for #%s.", tag)
+	default:
+		if hadData {
+			if !m.showHidden {
+				return "No posts to show. Press X to reveal hidden posts."
+			}
+			return "No posts to show."
+		}
+		return "No #terminalrant posts yet. Start the rant."
+	}
+}
+
 func (m Model) helpView() string {
 	var items []string
 
-	if m.showDetail {
+	if m.showProfile {
+		items = []string{
+			"j/k: focus",
+			"enter: open",
+			"f: follow",
+			"B: blocked",
+			"esc/q: back",
+			"?: all keys",
+		}
+	} else if m.showDetail {
 		items = []string{
 			"j/k: focus",
 			"enter: open",
 			"l: like",
+			"f: follow",
+			"z/Z: profile",
 			"h/H: top/home",
 			"esc/q: back",
 			"?: all keys",
@@ -520,6 +619,8 @@ func (m Model) helpView() string {
 			"enter: detail",
 			"p/P: rant",
 			"l: like",
+			"f: follow",
+			"z/Z: profile",
 			"q: quit",
 			"?: all keys",
 		}
@@ -531,22 +632,42 @@ func (m Model) helpView() string {
 		}
 	}
 
-	hints := common.StatusBarStyle.Render("  " + strings.Join(items, " • "))
+	wrapWidth := m.width - 2
+	if wrapWidth < 16 {
+		wrapWidth = 16
+	}
+	hints := common.StatusBarStyle.
+		Width(wrapWidth).
+		Render("  " + strings.Join(items, " • "))
 	creator := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#555555")).
 		Italic(true).
 		PaddingTop(1).
+		Width(wrapWidth).
 		Render(fmt.Sprintf("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12 • g: visit • © %d CrestNiraj12", time.Now().Year()))
 	return hints + "\n" + creator
 }
 
 func (m Model) renderKeyDialog() string {
 	var lines []string
-	if m.showDetail {
+	if m.showProfile {
+		lines = []string{
+			"j/k or up/down  move focus",
+			"enter           open selected post detail",
+			"f               follow/unfollow profile owner",
+			"B               show blocked users",
+			"esc / q         back",
+			"ctrl+c          force quit",
+			"?               toggle this dialog",
+		}
+	} else if m.showDetail {
 		lines = []string{
 			"j/k or up/down  move focus",
 			"enter           open selected reply thread",
 			"l               like/dislike selected post",
+			"f               follow/unfollow selected user",
+			"z               open selected user profile",
+			"Z               open own profile",
 			"i               toggle image previews",
 			"I               open selected media",
 			"c / C           reply via editor / inline",
@@ -576,6 +697,9 @@ func (m Model) renderKeyDialog() string {
 			"v               edit profile",
 			"c / C           reply via editor / inline",
 			"l               like/dislike selected post",
+			"f               follow/unfollow selected user",
+			"z               open selected user profile",
+			"Z               open own profile",
 			"x / X           hide post / toggle hidden posts",
 			"b               block selected user",
 			"B               show blocked users",
@@ -599,6 +723,7 @@ func (m Model) renderKeyDialog() string {
 			"I               open selected media",
 			"H               set hashtag feed tag",
 			"v               edit profile",
+			"Z               open own profile",
 			"B               show blocked users",
 			"r               refresh timeline",
 			"g               open creator GitHub",
@@ -624,7 +749,7 @@ func (m Model) renderTabs() string {
 	}{
 		{label: "#terminalrant", source: sourceTerminalRant},
 		{label: "trending", source: sourceTrending},
-		{label: "personal", source: sourcePersonal},
+		{label: "following", source: sourceFollowing},
 	}
 	if m.hasCustomTab() {
 		tabs = append(tabs, struct {
@@ -821,8 +946,134 @@ func authorStyleFor(username string, isOwn bool) lipgloss.Style {
 		Foreground(lipgloss.Color(palette[idx]))
 }
 
-func renderAuthor(username string, isOwn bool) string {
-	return authorStyleFor(username, isOwn).Render("@" + username)
+func renderAuthor(username string, isOwn bool, followed bool) string {
+	out := authorStyleFor(username, isOwn).Render("@" + username)
+	if followed && !isOwn {
+		out += lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Faint(true).Render(" ✓")
+	}
+	return out
+}
+
+func (m Model) renderProfileView() string {
+	var b strings.Builder
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
+	b.WriteString(title + tagline + "\n")
+	b.WriteString(m.renderTabs() + "\n")
+	crumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).MarginBottom(1)
+	separator := crumbStyle.Render(" > ")
+	profileLabel := "Profile"
+	if strings.TrimSpace(m.profile.Username) != "" {
+		profileLabel = "Profile @" + m.profile.Username
+	}
+	breadcrumb := lipgloss.JoinHorizontal(
+		lipgloss.Bottom,
+		common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel()),
+		separator,
+		crumbStyle.Render(profileLabel),
+	)
+	b.WriteString(breadcrumb + "\n")
+
+	if m.profileLoading {
+		b.WriteString("  " + m.spinner.View() + " Loading profile...\n")
+		b.WriteString("\n" + m.helpView())
+		return b.String()
+	}
+	if m.profileErr != nil {
+		b.WriteString(common.ErrorStyle.Render("  Error: " + m.profileErr.Error()))
+		b.WriteString("\n\n" + m.helpView())
+		return b.String()
+	}
+
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF8700")).
+		Padding(1, 2).
+		MarginLeft(2).
+		Width(74)
+	if m.profileCursor == 0 {
+		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#FFFFFF"))
+	}
+
+	var card strings.Builder
+	headerAuthor := renderAuthor(m.profile.Username, false, m.isFollowing(m.profile.ID))
+	if strings.TrimSpace(m.profile.DisplayName) != "" {
+		headerAuthor += " " + common.MetadataStyle.Render("("+m.profile.DisplayName+")")
+	}
+	card.WriteString(headerAuthor + "\n")
+	card.WriteString(common.MetadataStyle.Render(
+		fmt.Sprintf("Posts %d  Followers %d  Following %d", m.profile.PostsCount, m.profile.Followers, m.profile.Following),
+	) + "\n\n")
+	if !m.profileIsOwn && strings.TrimSpace(m.profile.ID) != "" {
+		followLabel := "not following"
+		if m.isFollowing(m.profile.ID) {
+			followLabel = "following"
+		}
+		card.WriteString(common.MetadataStyle.Render("Follow: "+followLabel) + "\n")
+		card.WriteString(common.MetadataStyle.Render("Keymap: f follow/unfollow") + "\n")
+		if m.confirmFollow {
+			card.WriteString(common.ConfirmStyle.Render("Unfollow? (y/n)") + "\n")
+		}
+		card.WriteString("\n")
+	}
+	if strings.TrimSpace(m.profile.Bio) != "" {
+		card.WriteString(common.ContentStyle.Width(66).Render(m.profile.Bio) + "\n")
+	}
+	b.WriteString(cardStyle.Render(card.String()))
+
+	b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Posts") + "\n")
+	if len(m.profilePosts) == 0 {
+		b.WriteString("\n  No posts.\n")
+	} else {
+		start := m.profileStart
+		if start < 0 {
+			start = 0
+		}
+		slots := m.profilePostSlots()
+		end := start + slots
+		if end > len(m.profilePosts) {
+			end = len(m.profilePosts)
+		}
+		if start > 0 {
+			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more posts above") + "\n")
+		}
+		for i := start; i < end; i++ {
+			p := m.profilePosts[i]
+			author := renderAuthor(p.Username, p.IsOwn, m.isFollowing(p.AccountID))
+			ts := common.TimestampStyle.Render(p.CreatedAt.Format("Jan 02 15:04"))
+			content, _ := splitContentAndTags(p.Content)
+			content = strings.TrimSpace(content)
+			if content == "" && len(p.Media) > 0 {
+				content = "(media post)"
+			}
+			if content == "" {
+				content = "(empty)"
+			}
+			lines := strings.Split(truncateToTwoLines(content, 56), "\n")
+			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
+			var body strings.Builder
+			for _, ln := range lines {
+				body.WriteString("  " + indicator + common.ContentStyle.Render(ln) + "\n")
+			}
+			likeIcon := "♡"
+			likeStyle := common.MetadataStyle
+			if p.Liked {
+				likeIcon = "♥"
+				likeStyle = common.LikeActiveStyle
+			}
+			meta := fmt.Sprintf("%s %d  ↩ %d", likeStyle.Render(likeIcon), p.LikesCount, p.RepliesCount)
+			item := fmt.Sprintf("  %s %s\n%s  %s", author, ts, strings.TrimSuffix(body.String(), "\n"), common.MetadataStyle.Render(meta))
+			if m.profileCursor == i+1 {
+				item = lipgloss.NewStyle().Background(lipgloss.Color("#333333")).Foreground(lipgloss.Color("#FFFFFF")).Render(item)
+			}
+			b.WriteString("\n" + item + "\n")
+		}
+		if end < len(m.profilePosts) {
+			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Bold(true).Render("▼ more posts below") + "\n")
+		}
+	}
+	b.WriteString("\n\n" + m.helpView())
+	return m.renderDetailViewport(b.String())
 }
 
 func clipLines(text string, maxLines int) string {

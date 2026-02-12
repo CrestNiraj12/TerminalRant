@@ -4,31 +4,34 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines shared key bindings across all views.
 type KeyMap struct {
-	Quit         key.Binding
-	ForceQuit    key.Binding // ctrl+c — force quit from any view
-	ToggleHints  key.Binding // ? — toggle hidden key hints
-	Refresh      key.Binding
-	LoadMore     key.Binding // disabled (legacy key)
-	BlockUser    key.Binding // b — block selected user
-	ManageBlocks key.Binding // B — manage blocked users
-	HidePost     key.Binding // x — hide selected post locally
-	ShowHidden   key.Binding // X — toggle hidden posts visibility
-	EditProfile  key.Binding // v — edit current profile
-	SwitchFeed   key.Binding // t — switch feed source
-	SetHashtag   key.Binding // H — change hashtag
-	NewEditor    key.Binding // p — compose via $EDITOR
-	NewInline    key.Binding // P — compose via inline textarea
-	Edit         key.Binding // e — fast edit own post (buffer)
-	EditInline   key.Binding // E — fast edit own post (inline)
-	Delete       key.Binding // d — fast delete own post
-	Like         key.Binding // l — like/favorite
-	Reply        key.Binding // r — reply via $EDITOR
-	ReplyInline  key.Binding // ctrl+r — reply inline
-	Up           key.Binding
-	Down         key.Binding
-	Open         key.Binding // o — open in browser
-	GitHub       key.Binding // g — open creator GitHub profile
-	Home         key.Binding // h — back to top of home feed
+	Quit           key.Binding
+	ForceQuit      key.Binding // ctrl+c — force quit from any view
+	ToggleHints    key.Binding // ? — toggle hidden key hints
+	Refresh        key.Binding
+	LoadMore       key.Binding // disabled (legacy key)
+	BlockUser      key.Binding // b — block selected user
+	FollowUser     key.Binding // f — follow/unfollow selected user
+	ManageBlocks   key.Binding // B — manage blocked users
+	HidePost       key.Binding // x — hide selected post locally
+	ShowHidden     key.Binding // X — toggle hidden posts visibility
+	EditProfile    key.Binding // v — edit current profile
+	OpenProfile    key.Binding // z — open selected user profile
+	OpenOwnProfile key.Binding // Z — open current user's profile
+	SwitchFeed     key.Binding // t — switch feed source
+	SetHashtag     key.Binding // H — change hashtag
+	NewEditor      key.Binding // p — compose via $EDITOR
+	NewInline      key.Binding // P — compose via inline textarea
+	Edit           key.Binding // e — fast edit own post (buffer)
+	EditInline     key.Binding // E — fast edit own post (inline)
+	Delete         key.Binding // d — fast delete own post
+	Like           key.Binding // l — like/favorite
+	Reply          key.Binding // r — reply via $EDITOR
+	ReplyInline    key.Binding // ctrl+r — reply inline
+	Up             key.Binding
+	Down           key.Binding
+	Open           key.Binding // o — open in browser
+	GitHub         key.Binding // g — open creator GitHub profile
+	Home           key.Binding // h — back to top of home feed
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -57,6 +60,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("b"),
 			key.WithHelp("b", "block user"),
 		),
+		FollowUser: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "follow/unfollow"),
+		),
 		ManageBlocks: key.NewBinding(
 			key.WithKeys("B"),
 			key.WithHelp("B", "blocked users"),
@@ -72,6 +79,14 @@ func DefaultKeyMap() KeyMap {
 		EditProfile: key.NewBinding(
 			key.WithKeys("v"),
 			key.WithHelp("v", "edit profile"),
+		),
+		OpenProfile: key.NewBinding(
+			key.WithKeys("z"),
+			key.WithHelp("z", "profile"),
+		),
+		OpenOwnProfile: key.NewBinding(
+			key.WithKeys("Z"),
+			key.WithHelp("Z", "my profile"),
 		),
 		SwitchFeed: key.NewBinding(
 			key.WithKeys("t"),
