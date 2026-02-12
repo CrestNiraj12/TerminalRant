@@ -362,7 +362,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.status = "🔥 Rant posted!"
 				// Only auto-open detail for new top-level posts.
 				if msg.Rant.InReplyToID == "" || msg.Rant.InReplyToID == "<nil>" || msg.Rant.InReplyToID == "0" {
-					a.feed, _ = a.feed.Update(tea.KeyMsg{Type: tea.KeyEnter})
+					a.feed, _ = a.feed.Update(feed.OpenDetailWithoutRepliesMsg{ID: msg.Rant.ID})
 				}
 			}
 		}

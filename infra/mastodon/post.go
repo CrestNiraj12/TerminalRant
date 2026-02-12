@@ -16,22 +16,20 @@ type postService struct {
 	client *Client
 }
 
+const requiredHashtag = "#terminalrant"
+
 // NewPostService creates a PostService backed by Mastodon.
 func NewPostService(client *Client) *postService {
 	return &postService{client: client}
 }
 
-func (s *postService) Post(_ context.Context, content string, hashtag string) (domain.Rant, error) {
+func (s *postService) Post(_ context.Context, content string, _ string) (domain.Rant, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return domain.Rant{}, domain.ErrEmptyRant
 	}
 
-	// Append the hashtag if not already present.
-	tag := "#" + hashtag
-	if !strings.Contains(content, tag) {
-		content = content + "\n\n" + tag
-	}
+	content = ensureRequiredHashtag(content)
 
 	form := url.Values{}
 	form.Set("status", content)
@@ -45,16 +43,13 @@ func (s *postService) Post(_ context.Context, content string, hashtag string) (d
 	return s.parseStatus(data)
 }
 
-func (s *postService) Edit(_ context.Context, id string, content string, hashtag string) (domain.Rant, error) {
+func (s *postService) Edit(_ context.Context, id string, content string, _ string) (domain.Rant, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return domain.Rant{}, domain.ErrEmptyRant
 	}
 
-	tag := "#" + hashtag
-	if !strings.Contains(content, tag) {
-		content = content + "\n\n" + tag
-	}
+	content = ensureRequiredHashtag(content)
 
 	form := url.Values{}
 	form.Set("status", content)
@@ -95,16 +90,13 @@ func (s *postService) Unlike(_ context.Context, id string) error {
 	return nil
 }
 
-func (s *postService) Reply(_ context.Context, parentID string, content string, hashtag string) (domain.Rant, error) {
+func (s *postService) Reply(_ context.Context, parentID string, content string, _ string) (domain.Rant, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return domain.Rant{}, domain.ErrEmptyRant
 	}
 
-	tag := "#" + hashtag
-	if !strings.Contains(content, tag) {
-		content = content + "\n\n" + tag
-	}
+	content = ensureRequiredHashtag(content)
 
 	form := url.Values{}
 	form.Set("status", content)
@@ -117,6 +109,13 @@ func (s *postService) Reply(_ context.Context, parentID string, content string, 
 	}
 
 	return s.parseStatus(data)
+}
+
+func ensureRequiredHashtag(content string) string {
+	if strings.Contains(strings.ToLower(content), requiredHashtag) {
+		return content
+	}
+	return content + "\n\n" + requiredHashtag
 }
 
 func (s *postService) parseStatus(data []byte) (domain.Rant, error) {

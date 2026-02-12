@@ -2,6 +2,7 @@ package feed
 
 import (
 	"fmt"
+	"hash/fnv"
 	"regexp"
 	"strings"
 
@@ -53,7 +54,7 @@ func (m Model) View() string {
 		for _, i := range visibleIndices {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
-			author := common.AuthorStyle.Render("@" + rant.Username)
+			author := renderAuthor(rant.Username, rant.IsOwn)
 			if rant.IsOwn {
 				author += common.OwnBadgeStyle.Render("(you)")
 			}
@@ -164,42 +165,10 @@ func (m Model) View() string {
 		}
 		listLines := strings.Split(listString, "\n")
 		viewHeight := m.feedViewportHeight()
-		// Keep selected card visible using exact rendered line ranges.
-		selectedPos := -1
-		orderedRanges := make([]lineRange, 0, len(visibleIndices))
-		for pos, idx := range visibleIndices {
-			if lr, ok := itemRanges[idx]; ok {
-				orderedRanges = append(orderedRanges, lr)
-				if idx == m.cursor {
-					selectedPos = pos
-				}
-			}
-		}
-		if len(orderedRanges) > 0 && selectedPos >= 0 {
-			topPos := 0
-			for topPos < len(orderedRanges) && orderedRanges[topPos].bottom < m.scrollLine {
-				topPos++
-			}
-			if topPos >= len(orderedRanges) {
-				topPos = len(orderedRanges) - 1
-			}
-			lastPos := topPos
-			for lastPos+1 < len(orderedRanges) && orderedRanges[lastPos+1].top < m.scrollLine+viewHeight {
-				lastPos++
-			}
-			// Item-synced scrolling: move viewport when selection hits edge.
-			if m.navDir > 0 && selectedPos == lastPos && lastPos < len(orderedRanges)-1 {
-				m.scrollLine = orderedRanges[topPos+1].top
-			} else if m.navDir < 0 && selectedPos == topPos && topPos > 0 {
-				m.scrollLine = orderedRanges[topPos-1].top
-			}
-		}
+		// Center-anchor scrolling: keep selected item near viewport center.
 		if lr, ok := itemRanges[m.cursor]; ok {
-			if lr.top < m.scrollLine {
-				m.scrollLine = lr.top
-			} else if lr.bottom >= m.scrollLine+viewHeight {
-				m.scrollLine = lr.bottom - viewHeight + 1
-			}
+			selectedMid := (lr.top + lr.bottom) / 2
+			m.scrollLine = selectedMid - (viewHeight / 2)
 		}
 		maxScroll := len(listLines) - viewHeight
 		if maxScroll < 0 {
@@ -232,7 +201,17 @@ func (m Model) View() string {
 		}
 		contentWindow := strings.Join(visible, "\n")
 		gutterWindow := strings.Join(gutter, "\n")
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, gutterWindow, " ", contentWindow))
+		listPane := lipgloss.JoinHorizontal(lipgloss.Top, gutterWindow, " ", contentWindow)
+		if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
+			previewPane := clipLines(panel, viewHeight)
+			previewPane = lipgloss.NewStyle().
+				Width(56).
+				MaxHeight(viewHeight).
+				Render(previewPane)
+			b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, listPane, "  ", previewPane))
+		} else {
+			b.WriteString(listPane)
+		}
 	}
 
 	b.WriteString("\n")
@@ -240,9 +219,6 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
 	} else if m.loadingMore {
 		b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
-	}
-	if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
-		b.WriteString("\n" + panel + "\n")
 	}
 	if m.pagingNotice != "" && len(m.rants) > 0 {
 		b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
@@ -329,7 +305,11 @@ func (m Model) renderDetailView() string {
 		Width(74)
 
 	var cardContent strings.Builder
-	cardContent.WriteString(common.AuthorStyle.Render("@"+r.Username) + " " + common.MetadataStyle.Render("("+r.Author+")") + "\n")
+	headerAuthor := renderAuthor(r.Username, r.IsOwn)
+	if r.IsOwn {
+		headerAuthor += common.OwnBadgeStyle.Render("(you)")
+	}
+	cardContent.WriteString(headerAuthor + " " + common.MetadataStyle.Render("("+r.Author+")") + "\n")
 	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n")
 
 	// Parent Context inside card (minimalist)
@@ -438,7 +418,7 @@ func (m Model) renderDetailView() string {
 			MarginLeft(2).
 			Width(74).
 			Render(fmt.Sprintf("%s %s\n%s",
-				common.AuthorStyle.Render("@"+parent.Username),
+				renderAuthor(parent.Username, parent.IsOwn),
 				common.TimestampStyle.Render(parent.CreatedAt.Format("Jan 02")),
 				common.ContentStyle.Render(parentSummary)))
 
@@ -470,7 +450,7 @@ func (m Model) renderDetailView() string {
 				}
 			}
 
-			author := common.AuthorStyle.Render("@" + r.Username)
+			author := renderAuthor(r.Username, r.IsOwn)
 			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
 			replyContentClean, _ := splitContentAndTags(r.Content)
 			if strings.TrimSpace(replyContentClean) == "" && len(r.Media) > 0 {
@@ -531,6 +511,7 @@ func (m Model) helpView() string {
 			"l: like",
 			"i: media",
 			"I: open media",
+			"h/H: top/home",
 			"esc/q: back",
 			"?: all keys",
 		}
@@ -580,7 +561,8 @@ func (m Model) renderKeyDialog() string {
 			"o               open post URL",
 			"v               edit profile",
 			"g               open creator GitHub",
-			"h               jump to feed home",
+			"h               scroll to top of post",
+			"H               go to feed home",
 			"esc / q         back",
 			"ctrl+c          force quit",
 			"?               toggle this dialog",
@@ -824,6 +806,39 @@ func renderAllTags(tags []string) string {
 	return strings.Join(parts, " ")
 }
 
+func authorStyleFor(username string, isOwn bool) lipgloss.Style {
+	if isOwn {
+		return lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#A6DA95"))
+	}
+	palette := []string{
+		"#7DC4E4", "#8BD5CA", "#F5A97F", "#C6A0F6", "#EBA0AC",
+		"#A6DA95", "#F9E2AF", "#89B4FA", "#F38BA8", "#94E2D5",
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(strings.ToLower(strings.TrimSpace(username))))
+	idx := int(h.Sum32()) % len(palette)
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(palette[idx]))
+}
+
+func renderAuthor(username string, isOwn bool) string {
+	return authorStyleFor(username, isOwn).Render("@" + username)
+}
+
+func clipLines(text string, maxLines int) string {
+	if maxLines < 1 {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) <= maxLines {
+		return text
+	}
+	return strings.Join(lines[:maxLines], "\n")
+}
+
 func renderMediaCompact(media []domain.MediaAttachment) string {
 	if len(media) == 0 {
 		return ""
@@ -920,7 +935,7 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 			r = m.rants[m.cursor].Rant
 		}
 	}
-	url := firstImagePreviewURL(r.Media)
+	url := firstMediaPreviewURL(r.Media)
 	if url == "" {
 		return ""
 	}

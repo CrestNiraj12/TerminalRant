@@ -153,6 +153,10 @@ type ResetFeedStateMsg struct {
 	ForceReset bool
 }
 
+type OpenDetailWithoutRepliesMsg struct {
+	ID string
+}
+
 type threadData struct {
 	Ancestors   []domain.Rant
 	Descendants []domain.Rant
@@ -273,7 +277,6 @@ type Model struct {
 	showMediaPreview bool
 	mediaPreview     map[string]string
 	mediaLoading     map[string]bool
-	navDir           int // -1 up, +1 down for feed edge-scroll behavior
 }
 
 // New creates a feed model with injected dependencies.
@@ -514,6 +517,27 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case OpenDetailWithoutRepliesMsg:
+		if msg.ID != "" {
+			m.setCursorByID(msg.ID)
+		}
+		if len(m.rants) == 0 {
+			return m, nil
+		}
+		m.showDetail = true
+		m.detailCursor = 0
+		m.detailStart = 0
+		m.detailScrollLine = 0
+		m.replies = nil
+		m.replyAll = nil
+		m.replyVisible = 0
+		m.hasMoreReplies = false
+		m.ancestors = nil
+		m.loadingReplies = false
+		m.focusedRant = nil
+		m.viewStack = nil
+		return m, m.ensureMediaPreviewCmd()
+
 	case ThreadLoadedMsg:
 		replies := organizeThreadReplies(msg.ID, msg.Descendants)
 		m.threadCache[msg.ID] = threadData{
@@ -631,67 +655,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case LikeRantMsg:
-		for i, ri := range m.rants {
-			if ri.Rant.ID == msg.ID {
-				if ri.Rant.Liked {
-					ri.Rant.Liked = false
-					ri.Rant.LikesCount--
-				} else {
-					ri.Rant.Liked = true
-					ri.Rant.LikesCount++
-				}
-				m.rants[i] = ri
-				break
-			}
-		}
-		// Also search replies
-		for i, r := range m.replies {
-			if r.ID == msg.ID {
-				if r.Liked {
-					r.Liked = false
-					r.LikesCount--
-				} else {
-					r.Liked = true
-					r.LikesCount++
-				}
-				m.replies[i] = r
-				break
-			}
-		}
+		m.applyLikeToggle(msg.ID)
 		m.toggleLikeInThreadCache(msg.ID)
 		return m, nil
 
 	case LikeResultMsg:
 		if msg.Err != nil {
-			// Rollback or show error
-			for i, ri := range m.rants {
-				if ri.Rant.ID == msg.ID {
-					// Toggle back on error
-					if ri.Rant.Liked {
-						ri.Rant.Liked = false
-						ri.Rant.LikesCount--
-					} else {
-						ri.Rant.Liked = true
-						ri.Rant.LikesCount++
-					}
-					m.rants[i] = ri
-					break
-				}
-			}
-			// Also rollback replies
-			for i, r := range m.replies {
-				if r.ID == msg.ID {
-					if r.Liked {
-						r.Liked = false
-						r.LikesCount--
-					} else {
-						r.Liked = true
-						r.LikesCount++
-					}
-					m.replies[i] = r
-					break
-				}
-			}
+			// Rollback by toggling again.
+			m.applyLikeToggle(msg.ID)
 			m.toggleLikeInThreadCache(msg.ID)
 		}
 		return m, nil
@@ -927,6 +898,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, tea.Batch(m.fetchRants(), m.emitPrefsChanged())
 
 		case key.Matches(msg, m.keys.SetHashtag):
+			if m.showDetail {
+				m.showDetail = false
+				m.focusedRant = nil
+				m.viewStack = nil
+				m.detailCursor = 0
+				m.detailStart = 0
+				m.detailScrollLine = 0
+				m.cursor = 0
+				return m, nil
+			}
 			m.hashtagInput = true
 			m.hashtagBuffer = m.hashtag
 			return m, nil
@@ -996,8 +977,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
-			m.navDir = -1
 			m.moveCursorVisible(-1)
+			m.ensureFeedCursorVisible()
 			return m, m.ensureMediaPreviewCmd()
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
@@ -1016,15 +997,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
-			m.navDir = 1
 			m.moveCursorVisible(1)
-			if m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
+			m.ensureFeedCursorVisible()
+			if !m.loading && len(m.rants) > 0 && m.oldestFeedID != "" && m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
 				m.loadingMore = true
 				return m, tea.Batch(m.fetchOlderRants(), m.ensureMediaPreviewCmd())
 			}
 			return m, m.ensureMediaPreviewCmd()
 
 		case key.Matches(msg, m.keys.Home):
+			if m.showDetail {
+				m.detailScrollLine = 0
+				m.detailCursor = 0
+				return m, m.ensureMediaPreviewCmd()
+			}
 			m.showDetail = false
 			m.confirmDelete = false
 			m.confirmBlock = false
@@ -1353,7 +1339,7 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 		return nil
 	}
 	r := m.getSelectedRant()
-	url := firstImagePreviewURL(r.Media)
+	url := firstMediaPreviewURL(r.Media)
 	if url == "" {
 		return nil
 	}
@@ -1367,17 +1353,22 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 	return fetchMediaPreview(url)
 }
 
-func firstImagePreviewURL(media []domain.MediaAttachment) string {
+func firstMediaPreviewURL(media []domain.MediaAttachment) string {
 	for _, m := range media {
 		t := strings.ToLower(strings.TrimSpace(m.Type))
-		if t != "image" && t != "gifv" {
-			continue
-		}
-		if strings.TrimSpace(m.PreviewURL) != "" {
-			return m.PreviewURL
-		}
-		if strings.TrimSpace(m.URL) != "" {
-			return m.URL
+		switch t {
+		case "video":
+			// Optimized: never pull full video bytes, only thumbnail preview.
+			if strings.TrimSpace(m.PreviewURL) != "" {
+				return m.PreviewURL
+			}
+		case "image", "gifv":
+			if strings.TrimSpace(m.PreviewURL) != "" {
+				return m.PreviewURL
+			}
+			if strings.TrimSpace(m.URL) != "" {
+				return m.URL
+			}
 		}
 	}
 	return ""
@@ -1557,14 +1548,17 @@ func (m *Model) ensureFeedCursorVisible() {
 	top := 0
 	bottom := 0
 	linePos := 0
-	for _, idx := range visible {
-		lines := m.feedItemRenderedLines(m.rants[idx].Rant)
+	for i, idx := range visible {
 		if idx == m.cursor {
+			lines := m.feedItemRenderedLines(m.rants[idx].Rant)
 			top = linePos
 			bottom = linePos + lines - 1
 			break
 		}
-		linePos += lines
+		linePos += m.feedItemRenderedLines(m.rants[idx].Rant)
+		if i < len(visible)-1 {
+			linePos += 1
+		}
 	}
 	viewHeight := m.feedViewportHeight()
 	if top < m.scrollLine {
@@ -1723,6 +1717,20 @@ func (m Model) findRantByID(id string) (domain.Rant, bool) {
 	return domain.Rant{}, false
 }
 
+func (m *Model) setCursorByID(id string) {
+	if strings.TrimSpace(id) == "" {
+		return
+	}
+	for i := range m.rants {
+		if m.rants[i].Rant.ID == id {
+			m.cursor = i
+			m.ensureVisibleCursor()
+			m.ensureFeedCursorVisible()
+			return
+		}
+	}
+}
+
 func (m *Model) toggleLikeInThreadCache(id string) {
 	for key, data := range m.threadCache {
 		updated := false
@@ -1753,6 +1761,49 @@ func (m *Model) toggleLikeInThreadCache(id string) {
 		if updated {
 			m.threadCache[key] = data
 		}
+	}
+}
+
+func (m *Model) applyLikeToggle(id string) {
+	toggle := func(liked *bool, likesCount *int) {
+		if *liked {
+			*liked = false
+			if *likesCount > 0 {
+				*likesCount--
+			}
+		} else {
+			*liked = true
+			*likesCount++
+		}
+	}
+
+	for i, ri := range m.rants {
+		if ri.Rant.ID == id {
+			toggle(&ri.Rant.Liked, &ri.Rant.LikesCount)
+			m.rants[i] = ri
+			break
+		}
+	}
+	for i := range m.replies {
+		if m.replies[i].ID == id {
+			toggle(&m.replies[i].Liked, &m.replies[i].LikesCount)
+			break
+		}
+	}
+	for i := range m.replyAll {
+		if m.replyAll[i].ID == id {
+			toggle(&m.replyAll[i].Liked, &m.replyAll[i].LikesCount)
+			break
+		}
+	}
+	for i := range m.ancestors {
+		if m.ancestors[i].ID == id {
+			toggle(&m.ancestors[i].Liked, &m.ancestors[i].LikesCount)
+			break
+		}
+	}
+	if m.focusedRant != nil && m.focusedRant.ID == id {
+		toggle(&m.focusedRant.Liked, &m.focusedRant.LikesCount)
 	}
 }
 

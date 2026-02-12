@@ -145,7 +145,7 @@ Dialogs:
 
 ## Notes
 
-- The configured hashtag is auto-appended on post/edit/reply if missing.
+- `#terminalrant` is always auto-appended on post/edit/reply if missing.
 - For display, HTML returned from Mastodon is stripped for terminal rendering.
 - UI state is stored in `ui_state.json` under `TERMINALRANT_AUTH_DIR`.
 
