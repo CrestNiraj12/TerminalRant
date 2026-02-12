@@ -45,6 +45,21 @@ type RantsPageErrorMsg struct {
 	Err error
 }
 
+type BlockUserMsg struct {
+	AccountID string
+	Username  string
+}
+
+type BlockResultMsg struct {
+	AccountID string
+	Username  string
+	Err       error
+}
+
+type HideAuthorPostsMsg struct {
+	AccountID string
+}
+
 // EditRantMsg is sent when the user selects 'Edit' from the action menu.
 type EditRantMsg struct {
 	Rant      domain.Rant
@@ -108,6 +123,14 @@ type threadData struct {
 	Descendants []domain.Rant
 }
 
+type feedSource int
+
+const (
+	sourceHashtag feedSource = iota
+	sourceTrending
+	sourcePersonal
+)
+
 // ResultMsg is a generic success/fail result for creation or update.
 type ResultMsg struct {
 	ID         string // Local or Server ID
@@ -157,6 +180,7 @@ type RantItem struct {
 type Model struct {
 	timeline       app.TimelineService
 	hashtag        string
+	feedSource     feedSource
 	rants          []RantItem
 	cursor         int
 	loading        bool
@@ -183,6 +207,11 @@ type Model struct {
 	viewStack      []*domain.Rant // To support going back in deep threading
 	showAllHints   bool
 	pagingNotice   string
+	hiddenIDs      map[string]bool
+	hiddenAuthors  map[string]bool
+	showHidden     bool
+	hashtagInput   bool
+	hashtagBuffer  string
 }
 
 // New creates a feed model with injected dependencies.
@@ -192,13 +221,16 @@ func New(timeline app.TimelineService, hashtag string) Model {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600"))
 
 	return Model{
-		timeline:    timeline,
-		hashtag:     hashtag,
-		keys:        common.DefaultKeyMap(),
-		spinner:     s,
-		loading:     true,
-		hasMoreFeed: true,
-		threadCache: make(map[string]threadData),
+		timeline:      timeline,
+		hashtag:       hashtag,
+		feedSource:    sourceHashtag,
+		keys:          common.DefaultKeyMap(),
+		spinner:       s,
+		loading:       true,
+		hasMoreFeed:   true,
+		threadCache:   make(map[string]threadData),
+		hiddenIDs:     make(map[string]bool),
+		hiddenAuthors: make(map[string]bool),
 	}
 }
 
@@ -333,6 +365,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else if m.hasMoreFeed {
 			m.pagingNotice = ""
 		}
+		m.ensureVisibleCursor()
+		m.ensureFeedCursorVisible()
 		return m, nil
 
 	case RantsPageErrorMsg:
@@ -399,6 +433,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loadingReplies = false
+		return m, nil
+
+	case HideAuthorPostsMsg:
+		if msg.AccountID == "" {
+			return m, nil
+		}
+		m.hiddenAuthors[msg.AccountID] = true
+		m.ensureVisibleCursor()
+		m.ensureFeedCursorVisible()
+		return m, nil
+
+	case BlockResultMsg:
+		if msg.Err == nil && msg.AccountID != "" {
+			m.hiddenAuthors[msg.AccountID] = true
+			m.ensureVisibleCursor()
+			m.ensureFeedCursorVisible()
+		}
 		return m, nil
 
 	case LikeRantMsg:
@@ -545,10 +596,90 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.hashtagInput {
+			switch msg.String() {
+			case "esc":
+				m.hashtagInput = false
+				m.hashtagBuffer = ""
+				return m, nil
+			case "enter":
+				tag := strings.TrimSpace(strings.TrimPrefix(m.hashtagBuffer, "#"))
+				m.hashtagInput = false
+				if tag == "" {
+					m.hashtagBuffer = ""
+					return m, nil
+				}
+				m.hashtag = tag
+				m.feedSource = sourceHashtag
+				m.hashtagBuffer = ""
+				m.loading = true
+				m.loadingMore = false
+				m.hasMoreFeed = true
+				m.oldestFeedID = ""
+				m.pagingNotice = "Switched to #" + tag
+				return m, m.fetchRants()
+			case "backspace":
+				if len(m.hashtagBuffer) > 0 {
+					r := []rune(m.hashtagBuffer)
+					m.hashtagBuffer = string(r[:len(r)-1])
+				}
+				return m, nil
+			}
+			if len(msg.Runes) > 0 {
+				m.hashtagBuffer += string(msg.Runes)
+			}
+			return m, nil
+		}
 
 		switch {
 		case key.Matches(msg, m.keys.ToggleHints):
 			m.showAllHints = true
+			return m, nil
+
+		case key.Matches(msg, m.keys.SwitchFeed):
+			m.feedSource = (m.feedSource + 1) % 3
+			m.loading = true
+			m.loadingMore = false
+			m.hasMoreFeed = true
+			m.oldestFeedID = ""
+			switch m.feedSource {
+			case sourceHashtag:
+				m.pagingNotice = "Feed: #" + m.hashtag
+			case sourceTrending:
+				m.pagingNotice = "Feed: trending"
+			case sourcePersonal:
+				m.pagingNotice = "Feed: personal"
+			}
+			return m, m.fetchRants()
+
+		case key.Matches(msg, m.keys.SetHashtag):
+			m.hashtagInput = true
+			m.hashtagBuffer = m.hashtag
+			return m, nil
+
+		case key.Matches(msg, m.keys.ShowHidden):
+			m.showHidden = !m.showHidden
+			if m.showHidden {
+				m.pagingNotice = "Showing hidden posts"
+			} else {
+				m.pagingNotice = "Hidden posts concealed"
+			}
+			m.ensureVisibleCursor()
+			m.ensureFeedCursorVisible()
+			return m, nil
+
+		case key.Matches(msg, m.keys.HidePost):
+			if m.showDetail {
+				break
+			}
+			sel, ok := m.selectedVisibleRant()
+			if !ok {
+				break
+			}
+			m.hiddenIDs[sel.ID] = true
+			m.pagingNotice = "Post hidden (X to toggle hidden)"
+			m.ensureVisibleCursor()
+			m.ensureFeedCursorVisible()
 			return m, nil
 
 		case key.Matches(msg, m.keys.Refresh):
@@ -578,13 +709,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			m.confirmDelete = false
-			if m.cursor > 0 {
-				m.cursor--
-			}
-			// Scroll up if necessary
-			if m.cursor < m.startIndex {
-				m.startIndex = m.cursor
-			}
+			m.moveCursorVisible(-1)
 			m.ensureFeedCursorVisible()
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
@@ -597,9 +722,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			}
 			m.confirmDelete = false
-			if m.cursor < len(m.rants)-1 {
-				m.cursor++
-			}
+			m.moveCursorVisible(1)
 			// Scroll down if necessary
 			reserved := 9
 			availableHeight := m.height - reserved
@@ -736,6 +859,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.getSelectedRant(), UseInline: true} }
 
+		case key.Matches(msg, m.keys.BlockUser):
+			r := m.getSelectedRant()
+			if r.AccountID == "" || r.IsOwn {
+				break
+			}
+			return m, func() tea.Msg { return BlockUserMsg{AccountID: r.AccountID, Username: r.Username} }
+
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
 				break
@@ -847,8 +977,20 @@ type DeleteRantMsg struct {
 func (m Model) fetchRants() tea.Cmd {
 	timeline := m.timeline
 	hashtag := m.hashtag
+	source := m.feedSource
 	return func() tea.Msg {
-		rants, err := timeline.FetchByHashtag(context.Background(), hashtag, defaultLimit)
+		var (
+			rants []domain.Rant
+			err   error
+		)
+		switch source {
+		case sourceHashtag:
+			rants, err = timeline.FetchByHashtag(context.Background(), hashtag, defaultLimit)
+		case sourceTrending:
+			rants, err = timeline.FetchPublicPage(context.Background(), defaultLimit, "")
+		case sourcePersonal:
+			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, "")
+		}
 		if err != nil {
 			return RantsErrorMsg{Err: err}
 		}
@@ -875,9 +1017,21 @@ func (m Model) fetchOlderRants() tea.Cmd {
 	}
 	timeline := m.timeline
 	hashtag := m.hashtag
+	source := m.feedSource
 	maxID := m.oldestFeedID
 	return func() tea.Msg {
-		rants, err := timeline.FetchByHashtagPage(context.Background(), hashtag, defaultLimit, maxID)
+		var (
+			rants []domain.Rant
+			err   error
+		)
+		switch source {
+		case sourceHashtag:
+			rants, err = timeline.FetchByHashtagPage(context.Background(), hashtag, defaultLimit, maxID)
+		case sourceTrending:
+			rants, err = timeline.FetchPublicPage(context.Background(), defaultLimit, maxID)
+		case sourcePersonal:
+			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, maxID)
+		}
 		if err != nil {
 			return RantsPageErrorMsg{Err: err}
 		}
@@ -904,6 +1058,9 @@ func (m Model) getSelectedRant() domain.Rant {
 		}
 	}
 	if len(m.rants) == 0 {
+		return domain.Rant{}
+	}
+	if m.cursor < 0 || m.cursor >= len(m.rants) {
 		return domain.Rant{}
 	}
 	return m.rants[m.cursor].Rant
@@ -951,12 +1108,21 @@ func (m *Model) ensureFeedCursorVisible() {
 	if m.showDetail {
 		return
 	}
-	if len(m.rants) == 0 {
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
 		m.scrollLine = 0
 		return
 	}
+	m.ensureVisibleCursor()
+	pos := 0
+	for i, idx := range visible {
+		if idx == m.cursor {
+			pos = i
+			break
+		}
+	}
 	viewHeight := m.feedViewportHeight()
-	top := m.cursor * feedItemLines
+	top := pos * feedItemLines
 	bottom := top + feedItemLines - 1
 	if top < m.scrollLine {
 		m.scrollLine = top
@@ -1033,6 +1199,107 @@ func (m *Model) toggleLikeInThreadCache(id string) {
 		if updated {
 			m.threadCache[key] = data
 		}
+	}
+}
+
+func (m Model) isHiddenRant(r domain.Rant) bool {
+	if m.showHidden {
+		return false
+	}
+	if m.hiddenIDs[r.ID] {
+		return true
+	}
+	if r.AccountID != "" && m.hiddenAuthors[r.AccountID] {
+		return true
+	}
+	return false
+}
+
+func (m Model) visibleIndices() []int {
+	indices := make([]int, 0, len(m.rants))
+	for i, ri := range m.rants {
+		if m.isHiddenRant(ri.Rant) {
+			continue
+		}
+		indices = append(indices, i)
+	}
+	return indices
+}
+
+func (m *Model) ensureVisibleCursor() {
+	if len(m.rants) == 0 {
+		m.cursor = 0
+		return
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.rants) {
+		m.cursor = len(m.rants) - 1
+	}
+	if m.showHidden {
+		return
+	}
+	if !m.isHiddenRant(m.rants[m.cursor].Rant) {
+		return
+	}
+	for i := m.cursor + 1; i < len(m.rants); i++ {
+		if !m.isHiddenRant(m.rants[i].Rant) {
+			m.cursor = i
+			return
+		}
+	}
+	for i := m.cursor - 1; i >= 0; i-- {
+		if !m.isHiddenRant(m.rants[i].Rant) {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+func (m *Model) moveCursorVisible(delta int) {
+	if len(m.rants) == 0 || delta == 0 {
+		return
+	}
+	steps := len(m.rants)
+	dir := 1
+	if delta < 0 {
+		dir = -1
+	}
+	for i := 0; i < steps; i++ {
+		next := m.cursor + dir
+		if next < 0 || next >= len(m.rants) {
+			return
+		}
+		m.cursor = next
+		if m.showHidden || !m.isHiddenRant(m.rants[m.cursor].Rant) {
+			return
+		}
+	}
+}
+
+func (m Model) selectedVisibleRant() (domain.Rant, bool) {
+	if len(m.rants) == 0 {
+		return domain.Rant{}, false
+	}
+	if m.cursor < 0 || m.cursor >= len(m.rants) {
+		return domain.Rant{}, false
+	}
+	r := m.rants[m.cursor].Rant
+	if m.isHiddenRant(r) {
+		return domain.Rant{}, false
+	}
+	return r, true
+}
+
+func (m Model) sourceLabel() string {
+	switch m.feedSource {
+	case sourceTrending:
+		return "trending"
+	case sourcePersonal:
+		return "personal"
+	default:
+		return "#" + m.hashtag
 	}
 }
 

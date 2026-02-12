@@ -26,7 +26,7 @@ func (m Model) View() string {
 	// Header Layout
 	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
-	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(fmt.Sprintf("#%s", m.hashtag))
+	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
 
 	b.WriteString(title + tagline + "\n")
 	b.WriteString(hashtag + "\n")
@@ -41,7 +41,8 @@ func (m Model) View() string {
 		b.WriteString("  No rants yet. Be the first!\n")
 	} else {
 		var listBuilder strings.Builder
-		for i := 0; i < len(m.rants); i++ {
+		visibleIndices := m.visibleIndices()
+		for _, i := range visibleIndices {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
 			author := common.AuthorStyle.Render("@" + rant.Username)
@@ -115,6 +116,9 @@ func (m Model) View() string {
 		}
 
 		listString := strings.TrimSuffix(listBuilder.String(), "\n")
+		if strings.TrimSpace(listString) == "" {
+			listString = "  No visible posts. Press X to show hidden posts."
+		}
 		listLines := strings.Split(listString, "\n")
 		viewHeight := m.feedViewportHeight()
 		maxScroll := len(listLines) - viewHeight
@@ -159,6 +163,10 @@ func (m Model) View() string {
 	}
 	if m.pagingNotice != "" && len(m.rants) > 0 {
 		b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
+		b.WriteString("\n")
+	}
+	if m.hashtagInput {
+		b.WriteString(common.StatusBarStyle.Render("  Set hashtag: #" + m.hashtagBuffer + " (enter: apply, esc: cancel)"))
 		b.WriteString("\n")
 	}
 
@@ -437,9 +445,12 @@ func (m Model) renderKeyDialog() string {
 			"l               like/dislike selected post",
 			"n               load more replies",
 			"c / C           reply via editor / inline",
+			"x / X           hide post / toggle hidden posts",
+			"b               block selected user",
 			"u               open parent post",
 			"r               refresh replies",
 			"o               open post URL",
+			"v               edit profile",
 			"g               open creator GitHub",
 			"h               jump to feed home",
 			"esc / q         back",
@@ -451,9 +462,14 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open detail",
 			"n               load older posts",
+			"t               switch feed (hashtag/trending/personal)",
+			"H               set hashtag feed tag",
 			"p / P           new rant via editor / inline",
+			"v               edit profile",
 			"c / C           reply via editor / inline",
 			"l               like/dislike selected post",
+			"x / X           hide post / toggle hidden posts",
+			"b               block selected user",
 			"r               refresh timeline",
 			"o               open post URL",
 			"g               open creator GitHub",
@@ -470,6 +486,9 @@ func (m Model) renderKeyDialog() string {
 		lines = []string{
 			"p / P           new rant via editor / inline",
 			"n               load older posts (when available)",
+			"t               switch feed (hashtag/trending/personal)",
+			"H               set hashtag feed tag",
+			"v               edit profile",
 			"r               refresh timeline",
 			"g               open creator GitHub",
 			"q               quit",

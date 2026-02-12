@@ -14,6 +14,12 @@ type TimelineService interface {
 	// FetchByHashtagPage returns a page of rants older than maxID (if provided).
 	FetchByHashtagPage(ctx context.Context, hashtag string, limit int, maxID string) ([]domain.Rant, error)
 
+	// FetchHomePage returns a page from the authenticated home timeline.
+	FetchHomePage(ctx context.Context, limit int, maxID string) ([]domain.Rant, error)
+
+	// FetchPublicPage returns a page from the public timeline.
+	FetchPublicPage(ctx context.Context, limit int, maxID string) ([]domain.Rant, error)
+
 	// FetchThread returns the context of a rant (ancestors and replies).
 	FetchThread(ctx context.Context, id string) (ancestors, descendants []domain.Rant, err error)
 }

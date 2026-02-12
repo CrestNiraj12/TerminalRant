@@ -134,6 +134,7 @@ func (s *postService) parseStatus(data []byte) (domain.Rant, error) {
 
 	return domain.Rant{
 		ID:           st.ID,
+		AccountID:    st.Account.ID,
 		Author:       author,
 		Username:     sanitizeForTerminal(st.Account.Acct),
 		Content:      stripHTML(st.Content),

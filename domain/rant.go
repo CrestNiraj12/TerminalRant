@@ -5,6 +5,7 @@ import "time"
 // Rant represents a single developer rant from the timeline.
 type Rant struct {
 	ID           string
+	AccountID    string // Author account ID
 	Author       string // Display Name
 	Username     string // @handle
 	Content      string // Plain text, HTML stripped

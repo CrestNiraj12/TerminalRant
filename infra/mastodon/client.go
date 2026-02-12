@@ -43,6 +43,11 @@ func (c *Client) Put(path string, body io.Reader) ([]byte, error) {
 	return c.do(http.MethodPut, path, body)
 }
 
+// Patch performs an authenticated PATCH request.
+func (c *Client) Patch(path string, body io.Reader) ([]byte, error) {
+	return c.do(http.MethodPatch, path, body)
+}
+
 // Delete performs an authenticated DELETE request.
 func (c *Client) Delete(path string) ([]byte, error) {
 	return c.do(http.MethodDelete, path, nil)

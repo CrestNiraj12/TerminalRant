@@ -55,7 +55,26 @@ func (s *timelineService) FetchByHashtagPage(_ context.Context, hashtag string, 
 	if maxID != "" {
 		path += "&max_id=" + url.QueryEscape(maxID)
 	}
+	return s.fetchTimelinePath(path)
+}
 
+func (s *timelineService) FetchHomePage(_ context.Context, limit int, maxID string) ([]domain.Rant, error) {
+	path := fmt.Sprintf("/api/v1/timelines/home?limit=%d", limit)
+	if maxID != "" {
+		path += "&max_id=" + url.QueryEscape(maxID)
+	}
+	return s.fetchTimelinePath(path)
+}
+
+func (s *timelineService) FetchPublicPage(_ context.Context, limit int, maxID string) ([]domain.Rant, error) {
+	path := fmt.Sprintf("/api/v1/timelines/public?limit=%d", limit)
+	if maxID != "" {
+		path += "&max_id=" + url.QueryEscape(maxID)
+	}
+	return s.fetchTimelinePath(path)
+}
+
+func (s *timelineService) fetchTimelinePath(path string) ([]domain.Rant, error) {
 	data, err := s.client.Get(path)
 	if err != nil {
 		return nil, fmt.Errorf("fetching timeline: %w", err)
@@ -82,6 +101,7 @@ func (s *timelineService) FetchByHashtagPage(_ context.Context, hashtag string, 
 
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
+			AccountID:    st.Account.ID,
 			Author:       author,
 			Username:     sanitizeForTerminal(st.Account.Acct),
 			Content:      stripHTML(st.Content),
@@ -139,6 +159,7 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
+			AccountID:    st.Account.ID,
 			Author:       author,
 			Username:     sanitizeForTerminal(st.Account.Acct),
 			Content:      stripHTML(st.Content),

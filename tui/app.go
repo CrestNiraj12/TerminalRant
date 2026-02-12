@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -71,6 +72,20 @@ type accountIDMsg struct {
 	ID string
 }
 
+type profileLoadedMsg struct {
+	Profile app.Profile
+	Err     error
+}
+
+type profileEditorDoneMsg struct {
+	TmpPath string
+	Err     error
+}
+
+type profileSaveResultMsg struct {
+	Err error
+}
+
 // Update handles messages and routes to the active sub-model.
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -86,6 +101,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// View-specific key bindings.
 		if a.active == feedView {
+			if key.Matches(msg, a.keys.EditProfile) {
+				return a, a.loadProfileForEdit()
+			}
+
 			if key.Matches(msg, a.keys.NewEditor) {
 				a.active = composeView
 				a.status = ""
@@ -153,6 +172,65 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.feed, _ = a.feed.Update(msg)
 		if msg.Err != nil {
 			a.status = "Error liking: " + msg.Err.Error()
+		}
+		return a, nil
+
+	case feed.BlockUserMsg:
+		a.status = "Blocking @" + msg.Username + "..."
+		return a, func() tea.Msg {
+			err := a.deps.Account.BlockUser(context.Background(), msg.AccountID)
+			return feed.BlockResultMsg{AccountID: msg.AccountID, Username: msg.Username, Err: err}
+		}
+
+	case feed.BlockResultMsg:
+		a.feed, _ = a.feed.Update(msg)
+		if msg.Err != nil {
+			a.status = "Error blocking @" + msg.Username + ": " + msg.Err.Error()
+		} else {
+			a.status = "Blocked @" + msg.Username + ". Their posts are hidden."
+		}
+		return a, nil
+
+	case profileLoadedMsg:
+		if msg.Err != nil {
+			a.status = "Profile error: " + msg.Err.Error()
+			return a, nil
+		}
+		cmd, tmpPath, err := a.deps.Editor.Cmd(formatProfileDraft(msg.Profile), "")
+		if err != nil {
+			a.status = "Editor error: " + err.Error()
+			return a, nil
+		}
+		a.status = "Editing profile..."
+		return a, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return profileEditorDoneMsg{TmpPath: tmpPath, Err: err}
+		})
+
+	case profileEditorDoneMsg:
+		if msg.Err != nil {
+			a.status = "Profile edit cancelled."
+			return a, nil
+		}
+		content, err := a.deps.Editor.ReadContent(msg.TmpPath)
+		if err != nil {
+			a.status = "Profile read error: " + err.Error()
+			return a, nil
+		}
+		displayName, bio, ok := parseProfileDraft(content)
+		if !ok {
+			a.status = "Invalid profile format. Keep 'Display Name:' and 'Bio:' sections."
+			return a, nil
+		}
+		return a, func() tea.Msg {
+			err := a.deps.Account.UpdateProfile(context.Background(), displayName, bio)
+			return profileSaveResultMsg{Err: err}
+		}
+
+	case profileSaveResultMsg:
+		if msg.Err != nil {
+			a.status = "Profile update failed: " + msg.Err.Error()
+		} else {
+			a.status = "Profile updated."
 		}
 		return a, nil
 
@@ -263,6 +341,38 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, nil
+}
+
+func (a App) loadProfileForEdit() tea.Cmd {
+	return func() tea.Msg {
+		profile, err := a.deps.Account.CurrentProfile(context.Background())
+		return profileLoadedMsg{Profile: profile, Err: err}
+	}
+}
+
+func formatProfileDraft(p app.Profile) string {
+	var b strings.Builder
+	b.WriteString("Display Name:\n")
+	b.WriteString(strings.TrimSpace(p.DisplayName))
+	b.WriteString("\n\nBio:\n")
+	b.WriteString(strings.TrimSpace(p.Bio))
+	b.WriteString("\n")
+	return b.String()
+}
+
+func parseProfileDraft(content string) (displayName string, bio string, ok bool) {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	parts := strings.Split(content, "\n\nBio:\n")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	head := parts[0]
+	if !strings.HasPrefix(head, "Display Name:\n") {
+		return "", "", false
+	}
+	displayName = strings.TrimSpace(strings.TrimPrefix(head, "Display Name:\n"))
+	bio = strings.TrimSpace(parts[1])
+	return displayName, bio, true
 }
 
 // View renders the active sub-model.

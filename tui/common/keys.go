@@ -9,6 +9,12 @@ type KeyMap struct {
 	ToggleHints key.Binding // ? — toggle hidden key hints
 	Refresh     key.Binding
 	LoadMore    key.Binding // n — load older posts/replies
+	BlockUser   key.Binding // b — block selected user
+	HidePost    key.Binding // x — hide selected post locally
+	ShowHidden  key.Binding // X — toggle hidden posts visibility
+	EditProfile key.Binding // v — edit current profile
+	SwitchFeed  key.Binding // t — switch feed source
+	SetHashtag  key.Binding // H — change hashtag
 	NewEditor   key.Binding // p — compose via $EDITOR
 	NewInline   key.Binding // P — compose via inline textarea
 	Edit        key.Binding // e — fast edit own post (buffer)
@@ -46,6 +52,30 @@ func DefaultKeyMap() KeyMap {
 		LoadMore: key.NewBinding(
 			key.WithKeys("n"),
 			key.WithHelp("n", "load more"),
+		),
+		BlockUser: key.NewBinding(
+			key.WithKeys("b"),
+			key.WithHelp("b", "block user"),
+		),
+		HidePost: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "hide post"),
+		),
+		ShowHidden: key.NewBinding(
+			key.WithKeys("X"),
+			key.WithHelp("X", "toggle hidden"),
+		),
+		EditProfile: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "edit profile"),
+		),
+		SwitchFeed: key.NewBinding(
+			key.WithKeys("t"),
+			key.WithHelp("t", "switch feed"),
+		),
+		SetHashtag: key.NewBinding(
+			key.WithKeys("H"),
+			key.WithHelp("H", "set hashtag"),
 		),
 		NewEditor: key.NewBinding(
 			key.WithKeys("p"),
