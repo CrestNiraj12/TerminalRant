@@ -17,11 +17,16 @@ import (
 func (m Model) View() string {
 	var b strings.Builder
 
+	if m.showBlocked {
+		base := m.renderBlockedView()
+		if m.showAllHints {
+			base += "\n\n" + m.renderKeyDialog()
+		}
+		return base
+	}
+
 	if m.showProfile {
 		base := m.renderProfileView()
-		if m.showBlocked {
-			base += "\n\n" + m.renderBlockedUsersDialog()
-		}
 		if m.showAllHints {
 			base += "\n\n" + m.renderKeyDialog()
 		}
@@ -31,9 +36,6 @@ func (m Model) View() string {
 	// If in detail view, render it exclusively (or as an overlay)
 	if m.showDetail {
 		base := m.renderDetailView()
-		if m.showBlocked {
-			base += "\n\n" + m.renderBlockedUsersDialog()
-		}
 		if m.showAllHints {
 			base += "\n\n" + m.renderKeyDialog()
 		}
@@ -59,6 +61,8 @@ func (m Model) View() string {
 		b.WriteString("  " + m.emptyFeedMessage(false) + "\n")
 	} else {
 		visibleIndices := m.visibleIndices()
+		showPreviewPanel := m.renderSelectedMediaPreviewPanel() != ""
+		cardWidth, bodyWidth := m.feedCardWidths(showPreviewPanel)
 		if len(visibleIndices) == 0 {
 			b.WriteString("  " + m.emptyFeedMessage(true) + "\n")
 			b.WriteString("\n")
@@ -84,9 +88,6 @@ func (m Model) View() string {
 			}
 			b.WriteString(m.helpView())
 			base := b.String()
-			if m.showBlocked {
-				base += "\n\n" + m.renderBlockedUsersDialog()
-			}
 			if m.showAllHints {
 				base += "\n\n" + m.renderKeyDialog()
 			}
@@ -150,7 +151,7 @@ func (m Model) View() string {
 				likeStyle.Render(likeIcon), rant.LikesCount, rant.RepliesCount)
 
 			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
-			preview := truncateToTwoLines(content, 70)
+			preview := truncateToTwoLines(content, bodyWidth)
 			previewLines := strings.Split(preview, "\n")
 			var bodyBuilder strings.Builder
 			for _, line := range previewLines {
@@ -175,7 +176,8 @@ func (m Model) View() string {
 
 			itemBase := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				Padding(0, 1)
+				Padding(0, 1).
+				Width(cardWidth)
 			itemSelected := itemBase.Copy().BorderForeground(lipgloss.Color("#FF8700"))
 			itemUnselected := itemBase.Copy().BorderForeground(lipgloss.Color("#45475A"))
 
@@ -258,7 +260,8 @@ func (m Model) View() string {
 		contentWindow := strings.Join(visible, "\n")
 		gutterWindow := strings.Join(gutter, "\n")
 		listPane := lipgloss.JoinHorizontal(lipgloss.Top, gutterWindow, " ", contentWindow)
-		if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
+		if showPreviewPanel {
+			panel := m.renderSelectedMediaPreviewPanel()
 			previewPane := clipLines(panel, viewHeight)
 			previewPane = lipgloss.NewStyle().
 				Width(56).
@@ -295,9 +298,6 @@ func (m Model) View() string {
 	b.WriteString(m.helpView())
 
 	base := b.String()
-	if m.showBlocked {
-		base += "\n\n" + m.renderBlockedUsersDialog()
-	}
 	if m.showAllHints {
 		base += "\n\n" + m.renderKeyDialog()
 	}
@@ -306,6 +306,9 @@ func (m Model) View() string {
 
 // truncateToTwoLines wraps and truncates text to at most 2 lines.
 func truncateToTwoLines(text string, width int) string {
+	if width < 12 {
+		width = 12
+	}
 	// Render with width to handle both explicit newlines and wrapping.
 	wrapped := lipgloss.NewStyle().Width(width).Render(text)
 	lines := strings.Split(wrapped, "\n")
@@ -314,6 +317,24 @@ func truncateToTwoLines(text string, width int) string {
 	}
 	// Take first 2 lines and append ellipsis
 	return strings.Join(lines[:2], "\n") + "..."
+}
+
+func (m Model) feedCardWidths(showPreviewPanel bool) (cardWidth int, bodyWidth int) {
+	// listPane = gutter + spacer + cards (+ optional preview pane)
+	available := m.width - 4 // gutter + spacer + a little safety
+	if showPreviewPanel {
+		available -= 58 // preview width + gap
+	}
+	if available < 44 {
+		available = 44
+	}
+	cardWidth = available
+	// Rounded border + horizontal padding consume a few columns.
+	bodyWidth = cardWidth - 10
+	if bodyWidth < 20 {
+		bodyWidth = 20
+	}
+	return cardWidth, bodyWidth
 }
 
 func (m Model) renderDetailView() string {
@@ -450,14 +471,12 @@ func (m Model) renderDetailView() string {
 		}
 	}
 
-	renderedCard := cardStyle.Render(cardContent.String())
+	renderedCard := cardStyle.
+		BorderForeground(lipgloss.Color("#45475A")).
+		Render(cardContent.String())
 	if m.detailCursor == 0 {
-		renderedCard = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#FFFFFF")).
-			Padding(1, 2).
-			MarginLeft(2).
-			Width(74).
+		renderedCard = cardStyle.
+			BorderForeground(lipgloss.Color("#FF8700")).
 			Render(cardContent.String())
 	}
 	if m.showHidden && m.isMarkedHidden(r) {
@@ -488,9 +507,14 @@ func (m Model) renderDetailView() string {
 		parentView = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("  Parent Thread:") + "\n" + parentCard + "\n"
 	}
 
-	b.WriteString(parentView + renderedCard)
+	postBlock := parentView + renderedCard
 	if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
-		b.WriteString("\n\n" + panel)
+		previewPane := lipgloss.NewStyle().
+			Width(56).
+			Render(panel)
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, postBlock, "  ", previewPane))
+	} else {
+		b.WriteString(postBlock)
 	}
 
 	// Replies Section
@@ -814,6 +838,22 @@ func (m Model) renderBlockedUsersDialog() string {
 		Render(body.String())
 }
 
+func (m Model) renderBlockedView() string {
+	var b strings.Builder
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
+	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
+	crumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).MarginBottom(1)
+	separator := crumbStyle.Render(" > ")
+	blockedCrumb := crumbStyle.Render("Blocked Users")
+
+	b.WriteString(title + tagline + "\n")
+	b.WriteString(m.renderTabs() + "\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, blockedCrumb) + "\n\n")
+	b.WriteString(m.renderBlockedUsersDialog())
+	return b.String()
+}
+
 func (m Model) renderDetailViewport(content string) string {
 	lines := strings.Split(content, "\n")
 	if m.height <= 0 {
@@ -987,12 +1027,12 @@ func (m Model) renderProfileView() string {
 
 	cardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#FF8700")).
+		BorderForeground(lipgloss.Color("#45475A")).
 		Padding(1, 2).
 		MarginLeft(2).
 		Width(74)
 	if m.profileCursor == 0 {
-		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#FFFFFF"))
+		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#FF8700"))
 	}
 
 	var card strings.Builder
@@ -1183,35 +1223,115 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 			r = m.rants[m.cursor].Rant
 		}
 	}
-	url := firstMediaPreviewURL(r.Media)
-	if url == "" {
+	urls := mediaPreviewURLs(r.Media)
+	if len(urls) == 0 {
 		return ""
 	}
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Bold(true).
-		Render("Image Preview (i: toggle, I: open full-res)")
-	if m.mediaLoading[url] {
+		Render("Image Preview (i: toggle, I: open all)")
+	maxTiles := minInt(len(urls), 4)
+	tiles := make([]string, 0, maxTiles)
+	renderTile := func(i int, width int, showLabel bool) string {
+		url := urls[i]
+		content := "queued"
+		if m.mediaLoading[url] {
+			content = m.spinner.View() + " loading..."
+		} else if preview, ok := m.mediaPreview[url]; ok {
+			if preview == "" {
+				content = "preview unavailable"
+			} else {
+				content = preview
+			}
+		}
+		text := content
+		if showLabel {
+			text = lipgloss.NewStyle().Foreground(lipgloss.Color("#7A7A7A")).Render(fmt.Sprintf("[%d]", i+1)) + "\n" + content
+		}
 		return lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3A4E63")).
+			BorderForeground(lipgloss.Color("#475E73")).
+			Width(width).
 			Padding(0, 1).
-			Render(header + "\n" + m.spinner.View() + " loading preview...")
+			Render(text)
 	}
-	preview, ok := m.mediaPreview[url]
-	if !ok {
-		return ""
-	}
-	if preview == "" {
-		return lipgloss.NewStyle().
+
+	body := ""
+	switch maxTiles {
+	case 1:
+		// Single image: fill the whole preview area (2x2-equivalent footprint).
+		url := urls[0]
+		content := "queued"
+		if m.mediaLoading[url] {
+			content = m.spinner.View() + " loading..."
+		} else if preview, ok := m.mediaPreview[url]; ok {
+			if preview == "" {
+				content = "preview unavailable"
+			} else {
+				content = scalePreviewAs2x2(preview)
+			}
+		}
+		body = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3A4E63")).
+			BorderForeground(lipgloss.Color("#475E73")).
+			Width(49).
 			Padding(0, 1).
-			Render(header + "\npreview unavailable")
+			Render(content)
+	case 2:
+		// Two images: 1x2 layout.
+		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
+	case 3:
+		// 2x2 grid with one empty cell.
+		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true), renderTile(2, 24, true))
+		top := lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
+		bottom := tiles[2]
+		body = top + "\n" + bottom
+	default:
+		// 4+ images: 2x2 grid + overflow indicator.
+		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true), renderTile(2, 24, true), renderTile(3, 24, true))
+		top := lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
+		bottom := lipgloss.JoinHorizontal(lipgloss.Top, tiles[2], " ", tiles[3])
+		body = top + "\n" + bottom
+	}
+	if len(urls) > 4 {
+		body += "\n" + lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8E8E8E")).
+			Render(fmt.Sprintf("+%d more", len(urls)-4))
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3A4E63")).
 		Padding(0, 1).
-		Render(header + "\n" + preview)
+		Render(header + "\n" + body)
+}
+
+func scalePreviewAs2x2(preview string) string {
+	lines := strings.Split(preview, "\n")
+	if len(lines) == 0 || strings.TrimSpace(preview) == "" {
+		return preview
+	}
+
+	// True 2x upscale for ANSI thumbnail cells:
+	// duplicate each color-cell horizontally and each line vertically.
+	cellRe := regexp.MustCompile(`\x1b\[48;2;\d{1,3};\d{1,3};\d{1,3}m  \x1b\[0m`)
+	out := make([]string, 0, len(lines)*2)
+	for _, ln := range lines {
+		cells := cellRe.FindAllString(ln, -1)
+		if len(cells) == 0 {
+			// Fallback for non-ANSI lines.
+			doubled := ln + ln
+			out = append(out, doubled, doubled)
+			continue
+		}
+		var b strings.Builder
+		for _, c := range cells {
+			b.WriteString(c)
+			b.WriteString(c)
+		}
+		scaledLine := b.String()
+		out = append(out, scaledLine, scaledLine)
+	}
+	return strings.Join(out, "\n")
 }

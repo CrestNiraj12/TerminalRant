@@ -389,6 +389,31 @@ func openURL(url string) tea.Cmd {
 	}
 }
 
+func openURLs(urls []string) tea.Cmd {
+	clean := make([]string, 0, len(urls))
+	seen := make(map[string]struct{}, len(urls))
+	for _, u := range urls {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		clean = append(clean, u)
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		for _, u := range clean {
+			_ = exec.Command("open", u).Start()
+		}
+		return nil
+	}
+}
+
 // Update handles messages for the feed view.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -506,6 +531,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
+		anchorScroll := m.scrollLine
+		anchorID := ""
+		if len(m.rants) > 0 && m.cursor >= 0 && m.cursor < len(m.rants) {
+			anchorID = m.rants[m.cursor].Rant.ID
+		}
 		m.loadingMore = false
 		m.err = nil
 		rants := msg.Rants
@@ -531,7 +561,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.rants = append(m.rants, RantItem{Rant: r, Status: StatusNormal})
 			added++
 		}
-		m.normalizeFeedOrder()
 		m.oldestFeedID = m.lastFeedID()
 		if m.feedSource == sourceTrending {
 			m.hasMoreFeed = added > 0
@@ -550,8 +579,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else if m.hasMoreFeed {
 			m.pagingNotice = ""
 		}
-		m.ensureVisibleCursor()
-		m.ensureFeedCursorVisible()
+		if anchorID != "" {
+			m.setCursorByID(anchorID)
+		}
+		m.scrollLine = anchorScroll
+		if m.scrollLine < 0 {
+			m.scrollLine = 0
+		}
 		return m, m.fetchRelationshipsForRants(msg.Rants)
 
 	case RantsPageErrorMsg:
@@ -936,6 +970,35 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.followTarget = false
 			}
 			switch {
+			case key.Matches(msg, m.keys.ToggleHints):
+				m.showAllHints = true
+				return m, nil
+			case key.Matches(msg, m.keys.Home):
+				// h: jump to top within profile view.
+				m.profileCursor = 0
+				m.profileStart = 0
+				return m, nil
+			case msg.String() == "H":
+				// H: go to feed home.
+				m.showProfile = false
+				m.profileIsOwn = false
+				m.profileLoading = false
+				m.profileErr = nil
+				m.profile = app.Profile{}
+				m.profilePosts = nil
+				m.profileCursor = 0
+				m.profileStart = 0
+				m.confirmFollow = false
+				m.followAccountID = ""
+				m.followUsername = ""
+				m.followTarget = false
+				m.cursor = 0
+				m.startIndex = 0
+				m.scrollLine = 0
+				m.showBlocked = false
+				m.confirmUnblock = false
+				m.unblockTarget = app.BlockedUser{}
+				return m, nil
 			case msg.String() == "esc" || msg.String() == "q":
 				m.showProfile = false
 				m.profileIsOwn = false
@@ -1010,7 +1073,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.hasMoreReplies = false
 					m.ancestors = nil
 					m.loadingReplies = true
-					m.focusedRant = nil
+					// Open exactly the selected profile post, even if it isn't in the current feed slice.
+					m.focusedRant = &target
 					m.viewStack = nil
 					return m, m.loadThreadFromCacheOrFetch(target.ID)
 				}
@@ -1141,8 +1205,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case msg.String() == "I":
 			r := m.getSelectedRant()
-			if mediaURL := firstMediaOpenURL(r.Media); mediaURL != "" {
-				return m, openURL(mediaURL)
+			if m.showDetail {
+				if m.focusedRant != nil {
+					r = *m.focusedRant
+				} else if len(m.rants) > 0 && m.cursor >= 0 && m.cursor < len(m.rants) {
+					r = m.rants[m.cursor].Rant
+				}
+			}
+			if urls := mediaOpenURLs(r.Media); len(urls) > 0 {
+				return m, openURLs(urls)
 			}
 			m.pagingNotice = "No media on selected post."
 			return m, nil
@@ -1744,51 +1815,92 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 		return nil
 	}
 	r := m.getSelectedRant()
-	url := firstMediaPreviewURL(r.Media)
-	if url == "" {
+	if m.showDetail {
+		if m.focusedRant != nil {
+			r = *m.focusedRant
+		} else if len(m.rants) > 0 && m.cursor >= 0 && m.cursor < len(m.rants) {
+			r = m.rants[m.cursor].Rant
+		}
+	}
+	urls := mediaPreviewURLs(r.Media)
+	if len(urls) == 0 {
 		return nil
 	}
-	if _, ok := m.mediaPreview[url]; ok {
+	cmds := make([]tea.Cmd, 0, len(urls))
+	for _, url := range urls {
+		if _, ok := m.mediaPreview[url]; ok {
+			continue
+		}
+		if m.mediaLoading[url] {
+			continue
+		}
+		m.mediaLoading[url] = true
+		cmds = append(cmds, fetchMediaPreview(url))
+	}
+	if len(cmds) == 0 {
 		return nil
 	}
-	if m.mediaLoading[url] {
-		return nil
-	}
-	m.mediaLoading[url] = true
-	return fetchMediaPreview(url)
+	return tea.Batch(cmds...)
 }
 
 func firstMediaPreviewURL(media []domain.MediaAttachment) string {
-	for _, m := range media {
-		t := strings.ToLower(strings.TrimSpace(m.Type))
-		switch t {
-		case "video":
-			// Optimized: never pull full video bytes, only thumbnail preview.
-			if strings.TrimSpace(m.PreviewURL) != "" {
-				return m.PreviewURL
-			}
-		case "image", "gifv":
-			if strings.TrimSpace(m.PreviewURL) != "" {
-				return m.PreviewURL
-			}
-			if strings.TrimSpace(m.URL) != "" {
-				return m.URL
-			}
-		}
+	urls := mediaPreviewURLs(media)
+	if len(urls) > 0 {
+		return urls[0]
 	}
 	return ""
 }
 
 func firstMediaOpenURL(media []domain.MediaAttachment) string {
-	for _, m := range media {
-		if strings.TrimSpace(m.URL) != "" {
-			return m.URL
-		}
-		if strings.TrimSpace(m.PreviewURL) != "" {
-			return m.PreviewURL
-		}
+	urls := mediaOpenURLs(media)
+	if len(urls) > 0 {
+		return urls[0]
 	}
 	return ""
+}
+
+func mediaPreviewURLs(media []domain.MediaAttachment) []string {
+	out := make([]string, 0, len(media))
+	seen := make(map[string]struct{}, len(media))
+	for _, m := range media {
+		t := strings.ToLower(strings.TrimSpace(m.Type))
+		switch t {
+		case "video", "image", "gifv":
+			url := strings.TrimSpace(m.PreviewURL)
+			if url == "" {
+				url = strings.TrimSpace(m.URL)
+			}
+			if url == "" {
+				continue
+			}
+			if _, ok := seen[url]; ok {
+				continue
+			}
+			seen[url] = struct{}{}
+			out = append(out, url)
+		}
+	}
+	return out
+}
+
+func mediaOpenURLs(media []domain.MediaAttachment) []string {
+	out := make([]string, 0, len(media))
+	seen := make(map[string]struct{}, len(media))
+	for _, m := range media {
+		url := strings.TrimSpace(m.URL)
+		if url == "" {
+			url = strings.TrimSpace(m.PreviewURL)
+		}
+		if url == "" {
+			continue
+		}
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		seen[url] = struct{}{}
+		out = append(out, url)
+	}
+	return out
 }
 
 func fetchMediaPreview(url string) tea.Cmd {
@@ -1812,7 +1924,7 @@ func fetchMediaPreview(url string) tea.Cmd {
 		}
 		return MediaPreviewLoadedMsg{
 			URL:     url,
-			Preview: renderANSIThumbnail(img, 24, 10),
+			Preview: renderANSIThumbnail(img, 8, 4),
 		}
 	}
 }
@@ -2072,33 +2184,7 @@ func (m *Model) ensureFeedCursorVisible() {
 	if m.showDetail {
 		return
 	}
-	visible := m.visibleIndices()
-	if len(visible) == 0 {
-		m.scrollLine = 0
-		return
-	}
 	m.ensureVisibleCursor()
-	top := 0
-	bottom := 0
-	linePos := 0
-	for i, idx := range visible {
-		if idx == m.cursor {
-			lines := m.feedItemRenderedLines(m.rants[idx].Rant)
-			top = linePos
-			bottom = linePos + lines - 1
-			break
-		}
-		linePos += m.feedItemRenderedLines(m.rants[idx].Rant)
-		if i < len(visible)-1 {
-			linePos += 1
-		}
-	}
-	viewHeight := m.feedViewportHeight()
-	if top < m.scrollLine {
-		m.scrollLine = top
-	} else if bottom >= m.scrollLine+viewHeight {
-		m.scrollLine = bottom - viewHeight + 1
-	}
 	if m.scrollLine < 0 {
 		m.scrollLine = 0
 	}
