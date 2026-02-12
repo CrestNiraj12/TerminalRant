@@ -9,6 +9,12 @@ type Profile struct {
 	Bio         string
 }
 
+type BlockedUser struct {
+	AccountID   string
+	Username    string
+	DisplayName string
+}
+
 // AccountService provides information about the authenticated user.
 type AccountService interface {
 	// CurrentAccountID returns the account ID of the authenticated user.
@@ -22,4 +28,10 @@ type AccountService interface {
 
 	// BlockUser blocks a user by account ID.
 	BlockUser(ctx context.Context, accountID string) error
+
+	// ListBlockedUsers returns blocked accounts for the authenticated user.
+	ListBlockedUsers(ctx context.Context, limit int) ([]BlockedUser, error)
+
+	// UnblockUser unblocks a user by account ID.
+	UnblockUser(ctx context.Context, accountID string) error
 }

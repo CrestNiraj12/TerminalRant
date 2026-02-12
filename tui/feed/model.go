@@ -60,6 +60,24 @@ type HideAuthorPostsMsg struct {
 	AccountID string
 }
 
+type RequestBlockedUsersMsg struct{}
+
+type BlockedUsersLoadedMsg struct {
+	Users []app.BlockedUser
+	Err   error
+}
+
+type UnblockUserMsg struct {
+	AccountID string
+	Username  string
+}
+
+type UnblockResultMsg struct {
+	AccountID string
+	Username  string
+	Err       error
+}
+
 // EditRantMsg is sent when the user selects 'Edit' from the action menu.
 type EditRantMsg struct {
 	Rant      domain.Rant
@@ -126,10 +144,20 @@ type threadData struct {
 type feedSource int
 
 const (
-	sourceHashtag feedSource = iota
+	sourceTerminalRant feedSource = iota
 	sourceTrending
 	sourcePersonal
+	sourceCustomHashtag
 )
+
+type FeedPrefsChangedMsg struct {
+	Hashtag string
+	Source  string
+}
+
+type PrefsSavedMsg struct {
+	Err error
+}
 
 // ResultMsg is a generic success/fail result for creation or update.
 type ResultMsg struct {
@@ -179,6 +207,7 @@ type RantItem struct {
 // Model holds the state for the feed (timeline) view.
 type Model struct {
 	timeline       app.TimelineService
+	defaultHashtag string
 	hashtag        string
 	feedSource     feedSource
 	rants          []RantItem
@@ -210,27 +239,44 @@ type Model struct {
 	hiddenIDs      map[string]bool
 	hiddenAuthors  map[string]bool
 	showHidden     bool
+	confirmBlock   bool
+	blockAccountID string
+	blockUsername  string
+	showBlocked    bool
+	loadingBlocked bool
+	blockedErr     error
+	blockedUsers   []app.BlockedUser
+	blockedCursor  int
+	confirmUnblock bool
+	unblockTarget  app.BlockedUser
 	hashtagInput   bool
 	hashtagBuffer  string
+	detailStart    int
 }
 
 // New creates a feed model with injected dependencies.
-func New(timeline app.TimelineService, hashtag string) Model {
+func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600"))
+	tag := strings.TrimSpace(strings.TrimPrefix(hashtag, "#"))
+	if tag == "" {
+		tag = "terminalrant"
+	}
+	source := parseFeedSource(initialSource)
 
 	return Model{
-		timeline:      timeline,
-		hashtag:       hashtag,
-		feedSource:    sourceHashtag,
-		keys:          common.DefaultKeyMap(),
-		spinner:       s,
-		loading:       true,
-		hasMoreFeed:   true,
-		threadCache:   make(map[string]threadData),
-		hiddenIDs:     make(map[string]bool),
-		hiddenAuthors: make(map[string]bool),
+		timeline:       timeline,
+		defaultHashtag: "terminalrant",
+		hashtag:        tag,
+		feedSource:     source,
+		keys:           common.DefaultKeyMap(),
+		spinner:        s,
+		loading:        true,
+		hasMoreFeed:    true,
+		threadCache:    make(map[string]threadData),
+		hiddenIDs:      make(map[string]bool),
+		hiddenAuthors:  make(map[string]bool),
 	}
 }
 
@@ -397,6 +443,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.ForceReset {
 			m.showDetail = false
 			m.confirmDelete = false
+			m.confirmBlock = false
+			m.blockAccountID = ""
+			m.blockUsername = ""
 			m.replies = nil
 			m.replyAll = nil
 			m.replyVisible = 0
@@ -405,6 +454,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.loadingReplies = false
 			m.focusedRant = nil
 			m.viewStack = nil
+			m.detailStart = 0
+			m.showBlocked = false
+			m.loadingBlocked = false
+			m.blockedErr = nil
+			m.blockedUsers = nil
+			m.blockedCursor = 0
+			m.confirmUnblock = false
+			m.unblockTarget = app.BlockedUser{}
 		}
 		return m, nil
 
@@ -426,6 +483,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.replies = m.replyAll[:m.replyVisible]
 		m.ancestors = msg.Ancestors
 		m.loadingReplies = false
+		m.ensureDetailCursorVisible()
 		return m, nil
 
 	case ThreadErrorMsg:
@@ -445,10 +503,72 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case BlockResultMsg:
+		m.confirmBlock = false
+		m.blockAccountID = ""
+		m.blockUsername = ""
 		if msg.Err == nil && msg.AccountID != "" {
 			m.hiddenAuthors[msg.AccountID] = true
 			m.ensureVisibleCursor()
 			m.ensureFeedCursorVisible()
+		}
+		return m, nil
+
+	case BlockedUsersLoadedMsg:
+		m.loadingBlocked = false
+		m.blockedErr = msg.Err
+		m.blockedUsers = msg.Users
+		if m.blockedCursor >= len(m.blockedUsers) {
+			m.blockedCursor = 0
+		}
+		return m, nil
+
+	case UnblockResultMsg:
+		m.confirmUnblock = false
+		m.unblockTarget = app.BlockedUser{}
+		if msg.Err != nil {
+			m.blockedErr = msg.Err
+			return m, nil
+		}
+		m.blockedErr = nil
+		filtered := make([]app.BlockedUser, 0, len(m.blockedUsers))
+		for _, u := range m.blockedUsers {
+			if u.AccountID == msg.AccountID {
+				continue
+			}
+			filtered = append(filtered, u)
+		}
+		m.blockedUsers = filtered
+		delete(m.hiddenAuthors, msg.AccountID)
+		if m.blockedCursor >= len(m.blockedUsers) && m.blockedCursor > 0 {
+			m.blockedCursor--
+		}
+		m.pagingNotice = "Unblocked @" + msg.Username
+		return m, nil
+
+	case AddOptimisticReplyMsg:
+		reply := domain.Rant{
+			ID:          fmt.Sprintf("local-reply-%d", time.Now().UnixNano()),
+			Content:     msg.Content,
+			Author:      "You",
+			Username:    "you",
+			IsOwn:       true,
+			CreatedAt:   time.Now(),
+			InReplyToID: msg.ParentID,
+		}
+		if !m.showDetail {
+			return m, nil
+		}
+		threadID := m.currentThreadRootID()
+		if threadID == "" || !m.belongsToCurrentThread(msg.ParentID) {
+			return m, nil
+		}
+		m.replyAll = append(m.replyAll, reply)
+		m.replyVisible = len(m.replyAll)
+		m.replies = m.replyAll
+		m.hasMoreReplies = false
+		if data, ok := m.threadCache[threadID]; ok {
+			data.Descendants = append(data.Descendants, reply)
+			m.threadCache[threadID] = data
 		}
 		return m, nil
 
@@ -545,6 +665,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 		} else {
+			if msg.Rant.InReplyToID != "" && msg.Rant.InReplyToID != "<nil>" && msg.Rant.InReplyToID != "0" {
+				m.reconcileReplyResult(msg.Rant)
+				return m, nil
+			}
 			// Success: replace optimistic item with server version.
 			for i, ri := range m.rants {
 				// Match by ID OR fuzzy content (for new posts)
@@ -596,6 +720,49 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.showBlocked {
+			switch {
+			case msg.String() == "esc" || msg.String() == "q":
+				m.showBlocked = false
+				m.confirmUnblock = false
+				m.unblockTarget = app.BlockedUser{}
+				return m, nil
+			case key.Matches(msg, m.keys.Up):
+				if m.blockedCursor > 0 {
+					m.blockedCursor--
+				}
+				return m, nil
+			case key.Matches(msg, m.keys.Down):
+				if m.blockedCursor < len(m.blockedUsers)-1 {
+					m.blockedCursor++
+				}
+				return m, nil
+			case msg.String() == "u":
+				if len(m.blockedUsers) == 0 || m.blockedCursor < 0 || m.blockedCursor >= len(m.blockedUsers) {
+					return m, nil
+				}
+				m.confirmUnblock = true
+				m.unblockTarget = m.blockedUsers[m.blockedCursor]
+				return m, nil
+			case msg.String() == "y":
+				if m.confirmUnblock && m.unblockTarget.AccountID != "" {
+					target := m.unblockTarget
+					m.confirmUnblock = false
+					m.unblockTarget = app.BlockedUser{}
+					return m, func() tea.Msg {
+						return UnblockUserMsg{AccountID: target.AccountID, Username: target.Username}
+					}
+				}
+				return m, nil
+			case msg.String() == "n":
+				if m.confirmUnblock {
+					m.confirmUnblock = false
+					m.unblockTarget = app.BlockedUser{}
+				}
+				return m, nil
+			}
+			return m, nil
+		}
 		if m.hashtagInput {
 			switch msg.String() {
 			case "esc":
@@ -610,14 +777,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, nil
 				}
 				m.hashtag = tag
-				m.feedSource = sourceHashtag
+				m.feedSource = sourceCustomHashtag
 				m.hashtagBuffer = ""
 				m.loading = true
 				m.loadingMore = false
 				m.hasMoreFeed = true
 				m.oldestFeedID = ""
 				m.pagingNotice = "Switched to #" + tag
-				return m, m.fetchRants()
+				return m, tea.Batch(
+					m.fetchRants(),
+					m.emitPrefsChanged(),
+				)
 			case "backspace":
 				if len(m.hashtagBuffer) > 0 {
 					r := []rune(m.hashtagBuffer)
@@ -637,25 +807,37 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.keys.SwitchFeed):
-			m.feedSource = (m.feedSource + 1) % 3
+			m.feedSource = (m.feedSource + 1) % 4
 			m.loading = true
 			m.loadingMore = false
 			m.hasMoreFeed = true
 			m.oldestFeedID = ""
 			switch m.feedSource {
-			case sourceHashtag:
-				m.pagingNotice = "Feed: #" + m.hashtag
+			case sourceTerminalRant:
+				m.pagingNotice = "Feed: #terminalrant"
 			case sourceTrending:
 				m.pagingNotice = "Feed: trending"
 			case sourcePersonal:
 				m.pagingNotice = "Feed: personal"
+			case sourceCustomHashtag:
+				m.pagingNotice = "Feed: #" + m.hashtag
 			}
-			return m, m.fetchRants()
+			return m, tea.Batch(m.fetchRants(), m.emitPrefsChanged())
 
 		case key.Matches(msg, m.keys.SetHashtag):
 			m.hashtagInput = true
 			m.hashtagBuffer = m.hashtag
 			return m, nil
+
+		case key.Matches(msg, m.keys.ManageBlocks):
+			m.showBlocked = true
+			m.loadingBlocked = true
+			m.blockedErr = nil
+			m.blockedUsers = nil
+			m.blockedCursor = 0
+			m.confirmUnblock = false
+			m.unblockTarget = app.BlockedUser{}
+			return m, func() tea.Msg { return RequestBlockedUsersMsg{} }
 
 		case key.Matches(msg, m.keys.ShowHidden):
 			m.showHidden = !m.showHidden
@@ -705,6 +887,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.showDetail {
 				if m.detailCursor > 0 {
 					m.detailCursor--
+					m.ensureDetailCursorVisible()
 				}
 				return m, nil
 			}
@@ -719,6 +902,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if m.hasMoreReplies && m.detailCursor >= len(m.replies)-prefetchTrigger {
 					m.loadMoreReplies()
 				}
+				m.ensureDetailCursorVisible()
 				return m, nil
 			}
 			m.confirmDelete = false
@@ -746,10 +930,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Home):
 			m.showDetail = false
 			m.confirmDelete = false
+			m.confirmBlock = false
+			m.blockAccountID = ""
+			m.blockUsername = ""
 			m.cursor = 0
 			m.startIndex = 0
 			m.scrollLine = 0
 			m.detailCursor = 0
+			m.detailStart = 0
+			m.showBlocked = false
+			m.confirmUnblock = false
+			m.unblockTarget = app.BlockedUser{}
 			return m, nil
 
 		case msg.String() == "enter":
@@ -757,6 +948,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if !m.showDetail {
 					m.showDetail = true
 					m.detailCursor = 0
+					m.detailStart = 0
 					m.replies = nil
 					m.replyAll = nil
 					m.replyVisible = 0
@@ -772,6 +964,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.viewStack = append(m.viewStack, m.focusedRant)
 					m.focusedRant = &selected
 					m.detailCursor = 0
+					m.detailStart = 0
 					m.replies = nil
 					m.replyAll = nil
 					m.replyVisible = 0
@@ -862,9 +1055,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.BlockUser):
 			r := m.getSelectedRant()
 			if r.AccountID == "" || r.IsOwn {
+				m.pagingNotice = "Cannot block this user."
 				break
 			}
-			return m, func() tea.Msg { return BlockUserMsg{AccountID: r.AccountID, Username: r.Username} }
+			m.confirmBlock = true
+			m.blockAccountID = r.AccountID
+			m.blockUsername = r.Username
+			return m, nil
 
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
@@ -876,12 +1073,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 
 		case msg.String() == "esc", msg.String() == "q":
+			if m.confirmBlock {
+				m.confirmBlock = false
+				m.blockAccountID = ""
+				m.blockUsername = ""
+				return m, nil
+			}
 			if m.showDetail {
 				if len(m.viewStack) > 0 {
 					// Pop from stack
 					m.focusedRant = m.viewStack[len(m.viewStack)-1]
 					m.viewStack = m.viewStack[:len(m.viewStack)-1]
 					m.detailCursor = 0
+					m.detailStart = 0
 
 					id := m.rants[m.cursor].Rant.ID
 					if m.focusedRant != nil {
@@ -899,6 +1103,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.showDetail = false
 				m.focusedRant = nil
 				m.viewStack = nil
+				m.detailStart = 0
 				return m, nil
 			}
 			if msg.String() == "q" {
@@ -917,9 +1122,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.rants[m.cursor] = ri
 				return m, m.deleteRant(ri.Rant.ID)
 			}
+			if m.confirmBlock && m.blockAccountID != "" {
+				accountID := m.blockAccountID
+				username := m.blockUsername
+				m.confirmBlock = false
+				m.blockAccountID = ""
+				m.blockUsername = ""
+				return m, func() tea.Msg { return BlockUserMsg{AccountID: accountID, Username: username} }
+			}
 		case msg.String() == "n":
 			if m.confirmDelete {
 				m.confirmDelete = false
+			}
+			if m.confirmBlock {
+				m.confirmBlock = false
+				m.blockAccountID = ""
+				m.blockUsername = ""
 			}
 		case msg.String() == "u":
 			if !m.showDetail {
@@ -945,6 +1163,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.viewStack = append(m.viewStack, &previous)
 			m.focusedRant = &parent
 			m.detailCursor = 0
+			m.detailStart = 0
 			m.replies = nil
 			m.replyAll = nil
 			m.replyVisible = 0
@@ -977,6 +1196,7 @@ type DeleteRantMsg struct {
 func (m Model) fetchRants() tea.Cmd {
 	timeline := m.timeline
 	hashtag := m.hashtag
+	defaultHashtag := m.defaultHashtag
 	source := m.feedSource
 	return func() tea.Msg {
 		var (
@@ -984,10 +1204,12 @@ func (m Model) fetchRants() tea.Cmd {
 			err   error
 		)
 		switch source {
-		case sourceHashtag:
+		case sourceTerminalRant:
+			rants, err = timeline.FetchByHashtag(context.Background(), defaultHashtag, defaultLimit)
+		case sourceCustomHashtag:
 			rants, err = timeline.FetchByHashtag(context.Background(), hashtag, defaultLimit)
 		case sourceTrending:
-			rants, err = timeline.FetchPublicPage(context.Background(), defaultLimit, "")
+			rants, err = timeline.FetchTrendingPage(context.Background(), defaultLimit, "")
 		case sourcePersonal:
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, "")
 		}
@@ -1009,6 +1231,7 @@ func (m *Model) loadMoreReplies() {
 	m.replyVisible = next
 	m.replies = m.replyAll[:m.replyVisible]
 	m.hasMoreReplies = m.replyVisible < len(m.replyAll)
+	m.ensureDetailCursorVisible()
 }
 
 func (m Model) fetchOlderRants() tea.Cmd {
@@ -1017,6 +1240,7 @@ func (m Model) fetchOlderRants() tea.Cmd {
 	}
 	timeline := m.timeline
 	hashtag := m.hashtag
+	defaultHashtag := m.defaultHashtag
 	source := m.feedSource
 	maxID := m.oldestFeedID
 	return func() tea.Msg {
@@ -1025,10 +1249,12 @@ func (m Model) fetchOlderRants() tea.Cmd {
 			err   error
 		)
 		switch source {
-		case sourceHashtag:
+		case sourceTerminalRant:
+			rants, err = timeline.FetchByHashtagPage(context.Background(), defaultHashtag, defaultLimit, maxID)
+		case sourceCustomHashtag:
 			rants, err = timeline.FetchByHashtagPage(context.Background(), hashtag, defaultLimit, maxID)
 		case sourceTrending:
-			rants, err = timeline.FetchPublicPage(context.Background(), defaultLimit, maxID)
+			rants, err = timeline.FetchTrendingPage(context.Background(), defaultLimit, maxID)
 		case sourcePersonal:
 			rants, err = timeline.FetchHomePage(context.Background(), defaultLimit, maxID)
 		}
@@ -1206,6 +1432,10 @@ func (m Model) isHiddenRant(r domain.Rant) bool {
 	if m.showHidden {
 		return false
 	}
+	return m.isMarkedHidden(r)
+}
+
+func (m Model) isMarkedHidden(r domain.Rant) bool {
 	if m.hiddenIDs[r.ID] {
 		return true
 	}
@@ -1213,6 +1443,121 @@ func (m Model) isHiddenRant(r domain.Rant) bool {
 		return true
 	}
 	return false
+}
+
+func (m *Model) ensureDetailCursorVisible() {
+	if !m.showDetail {
+		m.detailStart = 0
+		return
+	}
+	if m.detailCursor <= 0 {
+		m.detailStart = 0
+		return
+	}
+	slots := m.detailReplySlots()
+	if slots < 1 {
+		slots = 1
+	}
+	idx := m.detailCursor - 1
+	if idx < m.detailStart {
+		m.detailStart = idx
+	}
+	if idx >= m.detailStart+slots {
+		m.detailStart = idx - slots + 1
+	}
+	maxStart := len(m.replies) - slots
+	if maxStart < 0 {
+		maxStart = 0
+	}
+	if m.detailStart > maxStart {
+		m.detailStart = maxStart
+	}
+	if m.detailStart < 0 {
+		m.detailStart = 0
+	}
+}
+
+func (m Model) detailReplySlots() int {
+	// Header + parent/main card + footer/hints leave room for reply window.
+	h := m.height - 30
+	if h < 5 {
+		h = 5
+	}
+	slots := h / 5
+	if slots < 1 {
+		slots = 1
+	}
+	return slots
+}
+
+func (m Model) belongsToCurrentThread(parentID string) bool {
+	if parentID == "" {
+		return false
+	}
+	threadID := m.currentThreadRootID()
+	if parentID == threadID {
+		return true
+	}
+	if m.focusedRant != nil && parentID == m.focusedRant.ID {
+		return true
+	}
+	for _, r := range m.replies {
+		if r.ID == parentID {
+			return true
+		}
+	}
+	for _, a := range m.ancestors {
+		if a.ID == parentID {
+			return true
+		}
+	}
+	if data, ok := m.threadCache[threadID]; ok {
+		for _, r := range data.Descendants {
+			if r.ID == parentID {
+				return true
+			}
+		}
+		for _, a := range data.Ancestors {
+			if a.ID == parentID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m *Model) reconcileReplyResult(server domain.Rant) {
+	replace := func(list []domain.Rant) ([]domain.Rant, bool) {
+		for i := range list {
+			if list[i].ID == server.ID {
+				list[i] = server
+				return list, true
+			}
+			if strings.HasPrefix(list[i].ID, "local-reply-") &&
+				list[i].InReplyToID == server.InReplyToID &&
+				strings.TrimSpace(list[i].Content) == strings.TrimSpace(server.Content) {
+				list[i] = server
+				return list, true
+			}
+		}
+		return append(list, server), false
+	}
+
+	m.replyAll, _ = replace(m.replyAll)
+	m.replyVisible = len(m.replyAll)
+	m.replies = m.replyAll
+	m.hasMoreReplies = false
+
+	threadID := m.currentThreadRootID()
+	if data, ok := m.threadCache[threadID]; ok {
+		data.Descendants, _ = replace(data.Descendants)
+		m.threadCache[threadID] = data
+	}
+}
+
+type AddOptimisticReplyMsg struct {
+	ParentID string
+	Content  string
 }
 
 func (m Model) visibleIndices() []int {
@@ -1294,12 +1639,56 @@ func (m Model) selectedVisibleRant() (domain.Rant, bool) {
 
 func (m Model) sourceLabel() string {
 	switch m.feedSource {
+	case sourceTerminalRant:
+		return "#terminalrant"
 	case sourceTrending:
 		return "trending"
 	case sourcePersonal:
 		return "personal"
-	default:
+	case sourceCustomHashtag:
 		return "#" + m.hashtag
+	default:
+		return "#terminalrant"
+	}
+}
+
+func (m Model) sourcePersistValue() string {
+	switch m.feedSource {
+	case sourceTrending:
+		return "trending"
+	case sourcePersonal:
+		return "personal"
+	case sourceCustomHashtag:
+		return "custom"
+	default:
+		return "terminalrant"
+	}
+}
+
+func parseFeedSource(v string) feedSource {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "trending":
+		return sourceTrending
+	case "personal":
+		return sourcePersonal
+	case "custom":
+		return sourceCustomHashtag
+	default:
+		return sourceTerminalRant
+	}
+}
+
+func (m Model) emitPrefsChanged() tea.Cmd {
+	hashtag := strings.TrimSpace(strings.TrimPrefix(m.hashtag, "#"))
+	if hashtag == "" {
+		hashtag = "terminalrant"
+	}
+	source := m.sourcePersistValue()
+	return func() tea.Msg {
+		return FeedPrefsChangedMsg{
+			Hashtag: hashtag,
+			Source:  source,
+		}
 	}
 }
 

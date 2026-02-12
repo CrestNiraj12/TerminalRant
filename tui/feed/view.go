@@ -16,6 +16,9 @@ func (m Model) View() string {
 	// If in detail view, render it exclusively (or as an overlay)
 	if m.showDetail {
 		base := m.renderDetailView()
+		if m.showBlocked {
+			base += "\n\n" + m.renderBlockedUsersDialog()
+		}
 		if m.showAllHints {
 			base += "\n\n" + m.renderKeyDialog()
 		}
@@ -29,6 +32,7 @@ func (m Model) View() string {
 	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
 
 	b.WriteString(title + tagline + "\n")
+	b.WriteString(m.renderTabs() + "\n")
 	b.WriteString(hashtag + "\n")
 
 	// Content area
@@ -69,6 +73,15 @@ func (m Model) View() string {
 			case StatusFailed:
 				statusText = common.ErrorStyle.Render(" (failed)")
 			}
+			hiddenText := ""
+			if m.showHidden && m.isMarkedHidden(rant) {
+				hiddenText = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#111111")).
+					Background(lipgloss.Color("#ED8796")).
+					Bold(true).
+					Padding(0, 1).
+					Render("HIDDEN")
+			}
 
 			content := common.StripHashtag(rant.Content, m.hashtag)
 
@@ -92,8 +105,8 @@ func (m Model) View() string {
 
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
 
-			itemContent := fmt.Sprintf("%s%s  %s%s\n%s\n%s",
-				author, statusText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
+			itemContent := fmt.Sprintf("%s%s %s  %s%s\n%s\n%s",
+				author, statusText, hiddenText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
 
 			itemBase := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
@@ -106,6 +119,9 @@ func (m Model) View() string {
 				itemContent = itemSelected.Render(itemContent)
 				if m.confirmDelete {
 					itemContent += "\n" + common.ConfirmStyle.Render("  Delete this rant? (y/n)")
+				}
+				if m.confirmBlock {
+					itemContent += "\n" + common.ConfirmStyle.Render(fmt.Sprintf("  Block @%s? (y/n)", m.blockUsername))
 				}
 			} else {
 				itemContent = itemUnselected.Render(itemContent)
@@ -166,13 +182,23 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 	if m.hashtagInput {
-		b.WriteString(common.StatusBarStyle.Render("  Set hashtag: #" + m.hashtagBuffer + " (enter: apply, esc: cancel)"))
+		b.WriteString(
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#111111")).
+				Background(lipgloss.Color("#FFB454")).
+				Bold(true).
+				Padding(0, 1).
+				Render(" Set hashtag: #" + m.hashtagBuffer + " (enter: apply, esc: cancel) "),
+		)
 		b.WriteString("\n")
 	}
 
 	b.WriteString(m.helpView())
 
 	base := b.String()
+	if m.showBlocked {
+		base += "\n\n" + m.renderBlockedUsersDialog()
+	}
 	if m.showAllHints {
 		base += "\n\n" + m.renderKeyDialog()
 	}
@@ -210,14 +236,15 @@ func (m Model) renderDetailView() string {
 	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 
-	// Hashtag precisely as used in feed view
-	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(fmt.Sprintf("#%s", m.hashtag))
+	// Active source badge, consistent with feed view.
+	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
 
 	crumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).MarginBottom(1)
 	separator := crumbStyle.Render(" > ")
 	postCrumb := crumbStyle.Render(fmt.Sprintf("Post %s", r.ID))
 
 	b.WriteString(title + tagline + "\n")
+	b.WriteString(m.renderTabs() + "\n")
 
 	breadcrumb := lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, postCrumb)
 	if len(m.viewStack) > 0 {
@@ -260,6 +287,16 @@ func (m Model) renderDetailView() string {
 	if r.Liked {
 		likeIcon = "♥"
 		likeStyle = common.LikeActiveStyle
+	}
+	if m.showHidden && m.isMarkedHidden(r) {
+		cardContent.WriteString(
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#111111")).
+				Background(lipgloss.Color("#ED8796")).
+				Bold(true).
+				Padding(0, 1).
+				Render("HIDDEN") + "\n",
+		)
 	}
 	meta := fmt.Sprintf("%s Likes: %d  |  ↩ Replies: %d",
 		likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
@@ -328,7 +365,24 @@ func (m Model) renderDetailView() string {
 	} else if len(m.replies) > 0 {
 		b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Replies") + "\n")
 
-		for i, r := range m.replies {
+		start := m.detailStart
+		if start < 0 {
+			start = 0
+		}
+		if start > len(m.replies) {
+			start = len(m.replies)
+		}
+		end := start + m.detailReplySlots()
+		if end > len(m.replies) {
+			end = len(m.replies)
+		}
+
+		if start > 0 {
+			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("▲ more above") + "\n")
+		}
+
+		for i := start; i < end; i++ {
+			r := m.replies[i]
 			// Calculate depth based on relationship to focused rant
 			depth := 0
 			if r.InReplyToID != "" && r.InReplyToID != "<nil>" && r.InReplyToID != "0" && r.InReplyToID != r.ID {
@@ -343,7 +397,7 @@ func (m Model) renderDetailView() string {
 
 			author := common.AuthorStyle.Render("@" + r.Username)
 			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
-			contentLines := strings.Split(common.StripHashtag(r.Content, m.hashtag), "\n")
+			contentLines := strings.Split(truncateToTwoLines(common.StripHashtag(r.Content, m.hashtag), 56), "\n")
 
 			indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
 			indicator := indicatorStyle.Render("┃ ")
@@ -384,6 +438,9 @@ func (m Model) renderDetailView() string {
 			}
 			b.WriteString("\n" + replyContent + "\n")
 		}
+		if end < len(m.replies) {
+			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#666666")).Render("▼ more below") + "\n")
+		}
 		if m.hasMoreReplies {
 			remaining := len(m.replyAll) - len(m.replies)
 			if remaining < 0 {
@@ -393,6 +450,9 @@ func (m Model) renderDetailView() string {
 				fmt.Sprintf("n: load more replies (%d remaining)", remaining),
 			))
 		}
+	}
+	if m.confirmBlock {
+		b.WriteString("\n" + common.ConfirmStyle.Render(fmt.Sprintf("  Block @%s? (y/n)", m.blockUsername)))
 	}
 	b.WriteString("\n\n" + m.helpView())
 
@@ -447,6 +507,7 @@ func (m Model) renderKeyDialog() string {
 			"c / C           reply via editor / inline",
 			"x / X           hide post / toggle hidden posts",
 			"b               block selected user",
+			"B               show blocked users",
 			"u               open parent post",
 			"r               refresh replies",
 			"o               open post URL",
@@ -462,7 +523,7 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open detail",
 			"n               load older posts",
-			"t               switch feed (hashtag/trending/personal)",
+			"t               switch feed (#terminalrant/trending/personal/custom)",
 			"H               set hashtag feed tag",
 			"p / P           new rant via editor / inline",
 			"v               edit profile",
@@ -470,6 +531,7 @@ func (m Model) renderKeyDialog() string {
 			"l               like/dislike selected post",
 			"x / X           hide post / toggle hidden posts",
 			"b               block selected user",
+			"B               show blocked users",
 			"r               refresh timeline",
 			"o               open post URL",
 			"g               open creator GitHub",
@@ -486,9 +548,10 @@ func (m Model) renderKeyDialog() string {
 		lines = []string{
 			"p / P           new rant via editor / inline",
 			"n               load older posts (when available)",
-			"t               switch feed (hashtag/trending/personal)",
+			"t               switch feed (#terminalrant/trending/personal/custom)",
 			"H               set hashtag feed tag",
 			"v               edit profile",
+			"B               show blocked users",
 			"r               refresh timeline",
 			"g               open creator GitHub",
 			"q               quit",
@@ -504,4 +567,71 @@ func (m Model) renderKeyDialog() string {
 		Padding(1, 2).
 		Margin(1, 2).
 		Render(body)
+}
+
+func (m Model) renderTabs() string {
+	tabs := []struct {
+		label  string
+		source feedSource
+	}{
+		{label: "#terminalrant", source: sourceTerminalRant},
+		{label: "trending", source: sourceTrending},
+		{label: "personal", source: sourcePersonal},
+		{label: "#" + m.hashtag, source: sourceCustomHashtag},
+	}
+	active := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#111111")).
+		Background(lipgloss.Color("#FFB454")).
+		Bold(true).
+		Padding(0, 1)
+	inactive := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#B3B3B3")).
+		Background(lipgloss.Color("#2B2B2B")).
+		Padding(0, 1)
+
+	rendered := make([]string, 0, len(tabs))
+	for _, t := range tabs {
+		if m.feedSource == t.source {
+			rendered = append(rendered, active.Render(t.label))
+		} else {
+			rendered = append(rendered, inactive.Render(t.label))
+		}
+	}
+	return lipgloss.NewStyle().MarginLeft(2).Render(strings.Join(rendered, " "))
+}
+
+func (m Model) renderBlockedUsersDialog() string {
+	var body strings.Builder
+	body.WriteString("Blocked Users\n\n")
+	if m.loadingBlocked {
+		body.WriteString(m.spinner.View() + " Loading blocked users...\n")
+	} else if m.blockedErr != nil {
+		body.WriteString(common.ErrorStyle.Render("Error: " + m.blockedErr.Error()))
+		body.WriteString("\n")
+	} else if len(m.blockedUsers) == 0 {
+		body.WriteString("No blocked users.\n")
+	} else {
+		for i, u := range m.blockedUsers {
+			prefix := "  "
+			if i == m.blockedCursor {
+				prefix = "▶ "
+			}
+			name := "@" + u.Username
+			if strings.TrimSpace(u.DisplayName) != "" {
+				name += " (" + u.DisplayName + ")"
+			}
+			body.WriteString(prefix + name + "\n")
+		}
+	}
+	if m.confirmUnblock {
+		body.WriteString("\n" + common.ConfirmStyle.Render(fmt.Sprintf("Unblock @%s? (y/n)", m.unblockTarget.Username)))
+	}
+	body.WriteString("\n\nj/k: move • u: unblock • esc/q: close")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#FF8700")).
+		Padding(1, 2).
+		Margin(1, 2).
+		Width(74).
+		Render(body.String())
 }

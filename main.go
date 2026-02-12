@@ -40,13 +40,25 @@ func main() {
 	postSvc := mastodon.NewPostService(httpClient)
 	editorSvc := editor.NewEnvEditor()
 
+	uiState, _ := config.LoadUIState(cfg.UIStatePath)
+	initialHashtag := cfg.Hashtag
+	if uiState.Hashtag != "" {
+		initialHashtag = uiState.Hashtag
+	}
+	initialFeedSource := uiState.FeedSource
+	if initialFeedSource == "" {
+		initialFeedSource = "terminalrant"
+	}
+
 	// 4. Wire root TUI model.
 	rootModel := tui.NewApp(tui.Deps{
-		Timeline: timelineSvc,
-		Post:     postSvc,
-		Account:  accountSvc,
-		Editor:   editorSvc,
-		Hashtag:  cfg.Hashtag,
+		Timeline:  timelineSvc,
+		Post:      postSvc,
+		Account:   accountSvc,
+		Editor:    editorSvc,
+		Hashtag:   initialHashtag,
+		FeedView:  initialFeedSource,
+		StatePath: cfg.UIStatePath,
 	})
 
 	// 5. Run.

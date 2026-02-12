@@ -74,6 +74,27 @@ func (s *timelineService) FetchPublicPage(_ context.Context, limit int, maxID st
 	return s.fetchTimelinePath(path)
 }
 
+func (s *timelineService) FetchTrendingPage(_ context.Context, limit int, maxID string) ([]domain.Rant, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	// Mastodon trends endpoint does not support max_id pagination consistently.
+	// For deeper pages, fall back to public timeline so navigation still works.
+	if maxID != "" {
+		return s.FetchPublicPage(context.Background(), limit, maxID)
+	}
+	path := fmt.Sprintf("/api/v1/trends/statuses?limit=%d", limit)
+	rants, err := s.fetchTimelinePath(path)
+	if err != nil {
+		return nil, err
+	}
+	// Some instances return no trends; gracefully fall back to public timeline.
+	if len(rants) == 0 {
+		return s.FetchPublicPage(context.Background(), limit, "")
+	}
+	return rants, nil
+}
+
 func (s *timelineService) fetchTimelinePath(path string) ([]domain.Rant, error) {
 	data, err := s.client.Get(path)
 	if err != nil {

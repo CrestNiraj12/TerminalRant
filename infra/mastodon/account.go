@@ -81,3 +81,45 @@ func (s *accountService) BlockUser(_ context.Context, accountID string) error {
 	}
 	return nil
 }
+
+func (s *accountService) ListBlockedUsers(_ context.Context, limit int) ([]app.BlockedUser, error) {
+	if limit <= 0 {
+		limit = 40
+	}
+	path := fmt.Sprintf("/api/v1/blocks?limit=%d", limit)
+	data, err := s.client.Get(path)
+	if err != nil {
+		return nil, fmt.Errorf("fetching blocked users: %w", err)
+	}
+
+	var blocked []struct {
+		ID          string `json:"id"`
+		Acct        string `json:"acct"`
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal(data, &blocked); err != nil {
+		return nil, fmt.Errorf("parsing blocked users: %w", err)
+	}
+
+	out := make([]app.BlockedUser, 0, len(blocked))
+	for _, u := range blocked {
+		out = append(out, app.BlockedUser{
+			AccountID:   sanitizeForTerminal(u.ID),
+			Username:    sanitizeForTerminal(u.Acct),
+			DisplayName: sanitizeForTerminal(u.DisplayName),
+		})
+	}
+	return out, nil
+}
+
+func (s *accountService) UnblockUser(_ context.Context, accountID string) error {
+	if strings.TrimSpace(accountID) == "" {
+		return fmt.Errorf("invalid account id")
+	}
+	path := fmt.Sprintf("/api/v1/accounts/%s/unblock", accountID)
+	_, err := s.client.Post(path, nil)
+	if err != nil {
+		return fmt.Errorf("unblocking user: %w", err)
+	}
+	return nil
+}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -16,6 +17,12 @@ type Config struct {
 	OAuthClientPath   string // Path where OAuth client credentials are stored
 	OAuthCallbackPort int    // Local callback port for OAuth login
 	Hashtag           string // Hashtag to follow, without the '#'
+	UIStatePath       string // Path where UI state (tab/hashtag) is stored
+}
+
+type UIState struct {
+	Hashtag    string `json:"hashtag"`
+	FeedSource string `json:"feed_source"`
 }
 
 // Load reads configuration from environment variables.
@@ -67,5 +74,38 @@ func Load() (Config, error) {
 		OAuthClientPath:   filepath.Join(authDir, "oauth_client.json"),
 		OAuthCallbackPort: callbackPort,
 		Hashtag:           hashtag,
+		UIStatePath:       filepath.Join(authDir, "ui_state.json"),
 	}, nil
+}
+
+func LoadUIState(path string) (UIState, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return UIState{}, nil
+		}
+		return UIState{}, fmt.Errorf("reading ui state: %w", err)
+	}
+	var st UIState
+	if err := json.Unmarshal(data, &st); err != nil {
+		return UIState{}, fmt.Errorf("parsing ui state: %w", err)
+	}
+	return st, nil
+}
+
+func SaveUIState(path string, st UIState) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("invalid state path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating state directory: %w", err)
+	}
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding ui state: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("writing ui state: %w", err)
+	}
+	return nil
 }

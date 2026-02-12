@@ -11,6 +11,7 @@ import (
 
 	"terminalrant/app"
 	"terminalrant/domain"
+	"terminalrant/infra/config"
 	"terminalrant/infra/editor"
 	"terminalrant/tui/common"
 	"terminalrant/tui/compose"
@@ -19,11 +20,13 @@ import (
 
 // Deps holds all dependencies the TUI needs. Plain struct, not a DI container.
 type Deps struct {
-	Timeline app.TimelineService
-	Post     app.PostService
-	Account  app.AccountService
-	Editor   *editor.EnvEditor
-	Hashtag  string
+	Timeline  app.TimelineService
+	Post      app.PostService
+	Account   app.AccountService
+	Editor    *editor.EnvEditor
+	Hashtag   string
+	FeedView  string
+	StatePath string
 }
 
 type activeView int
@@ -48,7 +51,7 @@ func NewApp(deps Deps) App {
 	return App{
 		deps:   deps,
 		active: feedView,
-		feed:   feed.New(deps.Timeline, deps.Hashtag),
+		feed:   feed.New(deps.Timeline, deps.Hashtag, deps.FeedView),
 		keys:   common.DefaultKeyMap(),
 	}
 }
@@ -191,6 +194,43 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case feed.RequestBlockedUsersMsg:
+		return a, func() tea.Msg {
+			users, err := a.deps.Account.ListBlockedUsers(context.Background(), 80)
+			return feed.BlockedUsersLoadedMsg{Users: users, Err: err}
+		}
+
+	case feed.UnblockUserMsg:
+		return a, func() tea.Msg {
+			err := a.deps.Account.UnblockUser(context.Background(), msg.AccountID)
+			return feed.UnblockResultMsg{
+				AccountID: msg.AccountID,
+				Username:  msg.Username,
+				Err:       err,
+			}
+		}
+
+	case feed.FeedPrefsChangedMsg:
+		if strings.TrimSpace(a.deps.StatePath) == "" {
+			return a, nil
+		}
+		return a, func() tea.Msg {
+			err := config.SaveUIState(a.deps.StatePath, config.UIState{
+				Hashtag:    msg.Hashtag,
+				FeedSource: msg.Source,
+			})
+			if err != nil {
+				return feed.PrefsSavedMsg{Err: err}
+			}
+			return feed.PrefsSavedMsg{}
+		}
+
+	case feed.PrefsSavedMsg:
+		if msg.Err != nil {
+			a.status = "Could not save view settings: " + msg.Err.Error()
+		}
+		return a, nil
+
 	case profileLoadedMsg:
 		if msg.Err != nil {
 			a.status = "Profile error: " + msg.Err.Error()
@@ -277,8 +317,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			a.status = "Updating..."
 		} else if msg.IsReply {
-			// Replies are just new posts for now in terms of optimistic UI
-			// but could be handled specifically if we had a thread view.
+			a.feed, _ = a.feed.Update(feed.AddOptimisticReplyMsg{
+				ParentID: msg.ParentID,
+				Content:  msg.Content,
+			})
 			a.status = "Replying..."
 		} else {
 			a.feed, _ = a.feed.Update(feed.AddOptimisticRantMsg{
@@ -318,11 +360,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.status = "🔥 Rant updated!"
 			} else {
 				a.status = "🔥 Rant posted!"
-				// Automatically enter detail view for the new rant (post or reply)
-				// We need to wait for the feed to reconcile or just force it.
-				// Actually, the feed model update might have already set the cursor to 0.
-				// Let's send an "enter" key msg to the feed model through its Update.
-				a.feed, _ = a.feed.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				// Only auto-open detail for new top-level posts.
+				if msg.Rant.InReplyToID == "" || msg.Rant.InReplyToID == "<nil>" || msg.Rant.InReplyToID == "0" {
+					a.feed, _ = a.feed.Update(tea.KeyMsg{Type: tea.KeyEnter})
+				}
 			}
 		}
 		return a, nil

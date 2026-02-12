@@ -20,6 +20,9 @@ type TimelineService interface {
 	// FetchPublicPage returns a page from the public timeline.
 	FetchPublicPage(ctx context.Context, limit int, maxID string) ([]domain.Rant, error)
 
+	// FetchTrendingPage returns trending posts.
+	FetchTrendingPage(ctx context.Context, limit int, maxID string) ([]domain.Rant, error)
+
 	// FetchThread returns the context of a rant (ancestors and replies).
 	FetchThread(ctx context.Context, id string) (ancestors, descendants []domain.Rant, err error)
 }
