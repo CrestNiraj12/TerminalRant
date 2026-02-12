@@ -21,6 +21,8 @@ const (
 	defaultLimit    = 20
 	replyPageSize   = 20
 	prefetchTrigger = 3
+	feedItemLines   = 6
+	creatorGitHub   = "https://github.com/CrestNiraj12"
 )
 
 // RantsLoadedMsg is sent when the timeline fetch completes successfully.
@@ -168,6 +170,7 @@ type Model struct {
 	showDetail     bool // Whether we are in full-post view
 	height         int  // Terminal height
 	startIndex     int  // First visible item in the list (for scrolling)
+	scrollLine     int  // Line-based scroll for feed viewport
 	ancestors      []domain.Rant
 	replies        []domain.Rant
 	replyAll       []domain.Rant
@@ -228,6 +231,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
+		m.ensureFeedCursorVisible()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -290,6 +294,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.cursor >= len(m.rants) {
 			m.cursor = 0
 		}
+		m.ensureFeedCursorVisible()
 		return m, nil
 
 	case RantsErrorMsg:
@@ -351,6 +356,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.rants = append([]RantItem{newItem}, m.rants...)
 		m.cursor = 0     // Focus the new item
 		m.startIndex = 0 // Scroll to top
+		m.scrollLine = 0
 		return m, nil
 
 	case ResetFeedStateMsg:
@@ -579,6 +585,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor < m.startIndex {
 				m.startIndex = m.cursor
 			}
+			m.ensureFeedCursorVisible()
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
 				if m.detailCursor < len(m.replies) {
@@ -607,6 +614,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor >= m.startIndex+visibleCount {
 				m.startIndex = m.cursor - visibleCount + 1
 			}
+			m.ensureFeedCursorVisible()
 			if m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
 				m.loadingMore = true
 				return m, m.fetchOlderRants()
@@ -617,6 +625,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.confirmDelete = false
 			m.cursor = 0
 			m.startIndex = 0
+			m.scrollLine = 0
 			m.detailCursor = 0
 			return m, nil
 
@@ -681,6 +690,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					return m, openURL(r.URL)
 				}
 			}
+
+		case key.Matches(msg, m.keys.GitHub):
+			return m, openURL(creatorGitHub)
 
 		case key.Matches(msg, m.keys.Edit):
 			if len(m.rants) == 0 {
@@ -923,6 +935,37 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func (m Model) feedViewportHeight() int {
+	// Reserve stable room for header, footer, and status/help rows.
+	const reserved = 13
+	h := m.height - reserved
+	if h < 8 {
+		h = 8
+	}
+	return h
+}
+
+func (m *Model) ensureFeedCursorVisible() {
+	if m.showDetail {
+		return
+	}
+	if len(m.rants) == 0 {
+		m.scrollLine = 0
+		return
+	}
+	viewHeight := m.feedViewportHeight()
+	top := m.cursor * feedItemLines
+	bottom := top + feedItemLines - 1
+	if top < m.scrollLine {
+		m.scrollLine = top
+	} else if bottom >= m.scrollLine+viewHeight {
+		m.scrollLine = bottom - viewHeight + 1
+	}
+	if m.scrollLine < 0 {
+		m.scrollLine = 0
+	}
 }
 
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {

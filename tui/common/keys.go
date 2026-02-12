@@ -20,6 +20,7 @@ type KeyMap struct {
 	Up          key.Binding
 	Down        key.Binding
 	Open        key.Binding // o — open in browser
+	GitHub      key.Binding // g — open creator GitHub profile
 	Home        key.Binding // h — back to top of home feed
 }
 
@@ -89,6 +90,10 @@ func DefaultKeyMap() KeyMap {
 		Open: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open"),
+		),
+		GitHub: key.NewBinding(
+			key.WithKeys("g"),
+			key.WithHelp("g", "creator github"),
 		),
 		Home: key.NewBinding(
 			key.WithKeys("h"),

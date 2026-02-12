@@ -40,34 +40,8 @@ func (m Model) View() string {
 	} else if len(m.rants) == 0 {
 		b.WriteString("  No rants yet. Be the first!\n")
 	} else {
-		// Calculate visible items based on height.
-		// Reserved height: Header (~5), Status Bar (~2), Bottom Padding (~2) = ~9 lines.
-		reserved := 9
-		availableHeight := m.height - reserved
-		if availableHeight < 0 {
-			availableHeight = 0
-		}
-		// Each box is 5 lines (3 content + 2 border)
-		visibleCount := availableHeight / 5
-		if visibleCount < 1 {
-			visibleCount = 1
-		}
-
-		// Ensure startIndex is valid
-		if m.startIndex < 0 {
-			m.startIndex = 0
-		}
-		if m.startIndex >= len(m.rants) {
-			m.startIndex = len(m.rants) - 1
-		}
-
-		endIndex := m.startIndex + visibleCount
-		if endIndex > len(m.rants) {
-			endIndex = len(m.rants)
-		}
-
 		var listBuilder strings.Builder
-		for i := m.startIndex; i < endIndex; i++ {
+		for i := 0; i < len(m.rants); i++ {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
 			author := common.AuthorStyle.Render("@" + rant.Username)
@@ -117,70 +91,64 @@ func (m Model) View() string {
 
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
 
-			parentHint := ""
-			if rant.InReplyToID != "" && rant.InReplyToID != "<nil>" && rant.InReplyToID != "0" {
-				parentHint = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("#444444")).
-					Italic(true).
-					Render(fmt.Sprintf("  ⬑ In reply to post %s", rant.InReplyToID))
-				if len(parentHint) > 70 {
-					parentHint = parentHint[:67] + "..."
-				}
-				parentHint = "\n" + parentHint
-			}
+			itemContent := fmt.Sprintf("%s%s  %s%s\n%s\n%s",
+				author, statusText, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
 
-			itemContent := fmt.Sprintf("%s%s  %s%s\n%s%s\n%s",
-				author, statusText, timestamp, replyIndicator, body, parentHint, common.MetadataStyle.Render(meta))
+			itemBase := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				Padding(0, 1).
+				Height(4)
+			itemSelected := itemBase.Copy().BorderForeground(lipgloss.Color("#FF8700"))
+			itemUnselected := itemBase.Copy().BorderForeground(lipgloss.Color("#45475A"))
 
 			if i == m.cursor {
-				itemContent = common.SelectedStyle.Render(itemContent)
+				itemContent = itemSelected.Render(itemContent)
 				if m.confirmDelete {
 					itemContent += "\n" + common.ConfirmStyle.Render("  Delete this rant? (y/n)")
 				}
 			} else {
-				itemContent = common.UnselectedStyle.Render(itemContent)
+				itemContent = itemUnselected.Render(itemContent)
 			}
 
 			listBuilder.WriteString(itemContent)
 			listBuilder.WriteString("\n")
 		}
 
-		// Scroll Bar Logic
-		totalRants := len(m.rants)
 		listString := strings.TrimSuffix(listBuilder.String(), "\n")
-		listHeight := lipgloss.Height(listString)
-
-		if totalRants > visibleCount {
-			thumbHeight := int(float64(visibleCount) / float64(totalRants) * float64(listHeight))
-			if thumbHeight < 1 {
-				thumbHeight = 1
-			}
-
-			thumbStart := int(float64(m.startIndex) / float64(totalRants) * float64(listHeight))
-			if thumbStart+thumbHeight > listHeight {
-				thumbStart = listHeight - thumbHeight
-			}
-
-			var sb strings.Builder
-			for j := 0; j < listHeight; j++ {
-				if j >= thumbStart && j < thumbStart+thumbHeight {
-					sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#FF8700")).Render("┃"))
-				} else {
-					sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#333333")).Render("┃"))
-				}
-				if j < listHeight-1 {
-					sb.WriteString("\n")
-				}
-			}
-
-			// Join list and scroll bar with 12 spaces margin for better separation
-			joined := lipgloss.JoinHorizontal(lipgloss.Top,
-				listString,
-				lipgloss.NewStyle().MarginLeft(12).Render(sb.String()))
-			b.WriteString(joined)
-		} else {
-			b.WriteString(listString)
+		listLines := strings.Split(listString, "\n")
+		viewHeight := m.feedViewportHeight()
+		maxScroll := len(listLines) - viewHeight
+		if maxScroll < 0 {
+			maxScroll = 0
 		}
+		if m.scrollLine > maxScroll {
+			m.scrollLine = maxScroll
+		}
+		if m.scrollLine < 0 {
+			m.scrollLine = 0
+		}
+		end := m.scrollLine + viewHeight
+		if end > len(listLines) {
+			end = len(listLines)
+		}
+		visible := listLines[m.scrollLine:end]
+		for len(visible) < viewHeight {
+			visible = append(visible, "")
+		}
+		markerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+		gutter := make([]string, len(visible))
+		for i := range gutter {
+			gutter[i] = " "
+		}
+		if m.scrollLine > 0 && len(gutter) > 0 {
+			gutter[0] = markerStyle.Render("▲")
+		}
+		if end < len(listLines) && len(gutter) > 0 {
+			gutter[len(gutter)-1] = markerStyle.Render("▼")
+		}
+		contentWindow := strings.Join(visible, "\n")
+		gutterWindow := strings.Join(gutter, "\n")
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, gutterWindow, " ", contentWindow))
 	}
 
 	b.WriteString("\n")
@@ -455,7 +423,8 @@ func (m Model) helpView() string {
 	creator := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#555555")).
 		Italic(true).
-		Render("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12")
+		PaddingTop(1).
+		Render("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12 • g: visit")
 	return hints + "\n" + creator
 }
 
@@ -471,6 +440,7 @@ func (m Model) renderKeyDialog() string {
 			"u               open parent post",
 			"r               refresh replies",
 			"o               open post URL",
+			"g               open creator GitHub",
 			"h               jump to feed home",
 			"esc / q         back",
 			"ctrl+c          force quit",
@@ -486,6 +456,7 @@ func (m Model) renderKeyDialog() string {
 			"l               like/dislike selected post",
 			"r               refresh timeline",
 			"o               open post URL",
+			"g               open creator GitHub",
 			"h               jump to top",
 			"q               quit",
 			"ctrl+c          force quit",
@@ -500,6 +471,7 @@ func (m Model) renderKeyDialog() string {
 			"p / P           new rant via editor / inline",
 			"n               load older posts (when available)",
 			"r               refresh timeline",
+			"g               open creator GitHub",
 			"q               quit",
 			"ctrl+c          force quit",
 			"?               toggle this dialog",
