@@ -23,7 +23,12 @@ func main() {
 	}
 
 	// 2. Build infrastructure.
-	tokenProvider := auth.NewFileTokenProvider(cfg.TokenPath)
+	if err := auth.EnsureOAuthLogin(context.Background(), cfg.InstanceURL, cfg.OAuthTokenPath, cfg.OAuthClientPath, cfg.OAuthCallbackPort); err != nil {
+		fmt.Fprintf(os.Stderr, "oauth login: %v\n", err)
+		os.Exit(1)
+	}
+
+	tokenProvider := auth.NewFileTokenProvider(cfg.OAuthTokenPath)
 	httpClient := mastodon.NewClient(cfg.InstanceURL, tokenProvider)
 
 	// 3. Build services (concrete types satisfy app.* interfaces).

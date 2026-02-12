@@ -5,21 +5,25 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // Config holds application-level configuration.
 type Config struct {
-	InstanceURL string // e.g. "https://mastodon.social"
-	TokenPath   string // Path to file containing the access token
-	Hashtag     string // Hashtag to follow, without the '#'
+	InstanceURL       string // e.g. "https://mastodon.social"
+	OAuthTokenPath    string // Path where OAuth access token is stored
+	OAuthClientPath   string // Path where OAuth client credentials are stored
+	OAuthCallbackPort int    // Local callback port for OAuth login
+	Hashtag           string // Hashtag to follow, without the '#'
 }
 
 // Load reads configuration from environment variables.
 //
-//	TERMINALRANT_INSTANCE  — Mastodon instance URL (required)
-//	TERMINALRANT_TOKEN     — Path to token file (default: ~/.config/terminalrant/token)
-//	TERMINALRANT_HASHTAG   — Hashtag to follow (default: "devrant")
+//	TERMINALRANT_INSTANCE            — Mastodon instance URL
+//	TERMINALRANT_AUTH_DIR            — Directory for OAuth token/client state
+//	TERMINALRANT_OAUTH_CALLBACK_PORT — Local callback port for OAuth login
+//	TERMINALRANT_HASHTAG             — Hashtag to follow
 func Load() (Config, error) {
 	instance := os.Getenv("TERMINALRANT_INSTANCE")
 	if instance == "" {
@@ -34,13 +38,22 @@ func Load() (Config, error) {
 	}
 	instance = strings.TrimRight(parsed.String(), "/")
 
-	tokenPath := os.Getenv("TERMINALRANT_TOKEN")
-	if tokenPath == "" {
+	authDir := os.Getenv("TERMINALRANT_AUTH_DIR")
+	if authDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return Config{}, fmt.Errorf("cannot determine home directory: %w", err)
 		}
-		tokenPath = filepath.Join(home, ".config", "terminalrant", "token")
+		authDir = filepath.Join(home, ".config", "terminalrant")
+	}
+
+	callbackPort := 45145
+	if p := os.Getenv("TERMINALRANT_OAUTH_CALLBACK_PORT"); p != "" {
+		parsedPort, err := strconv.Atoi(p)
+		if err != nil || parsedPort < 1024 || parsedPort > 65535 {
+			return Config{}, fmt.Errorf("invalid TERMINALRANT_OAUTH_CALLBACK_PORT: must be 1024-65535")
+		}
+		callbackPort = parsedPort
 	}
 
 	hashtag := os.Getenv("TERMINALRANT_HASHTAG")
@@ -49,8 +62,10 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		InstanceURL: instance,
-		TokenPath:   tokenPath,
-		Hashtag:     hashtag,
+		InstanceURL:       instance,
+		OAuthTokenPath:    filepath.Join(authDir, "oauth_token"),
+		OAuthClientPath:   filepath.Join(authDir, "oauth_client.json"),
+		OAuthCallbackPort: callbackPort,
+		Hashtag:           hashtag,
 	}, nil
 }

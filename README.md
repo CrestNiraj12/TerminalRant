@@ -18,7 +18,8 @@ leaving your terminal.
 ## Requirements
 
 - Go 1.25+
-- A Mastodon account + access token
+- A Mastodon account
+- Browser access for OAuth login
 
 ## Install
 
@@ -38,22 +39,12 @@ TerminalRant is configured via environment variables:
 
 - `TERMINALRANT_INSTANCE` — Mastodon instance base URL
   - Default: `https://mastodon.social`
-- `TERMINALRANT_TOKEN` — Path to a file containing your access token
-  - Default: `~/.config/terminalrant/token`
+- `TERMINALRANT_AUTH_DIR` — Directory used to store OAuth token/client state
+  - Default: `~/.config/terminalrant`
+- `TERMINALRANT_OAUTH_CALLBACK_PORT` — Local callback port for OAuth login
+  - Default: `45145`
 - `TERMINALRANT_HASHTAG` — Hashtag to follow (without `#`)
   - Default: `terminalrant`
-
-### Token file
-
-Create the token file and paste your Mastodon access token into it:
-
-```sh
-mkdir -p ~/.config/terminalrant
-pbpaste > ~/.config/terminalrant/token
-# or: cat > ~/.config/terminalrant/token
-```
-
-The token is read as a bearer token and trimmed for whitespace.
 
 ## Usage
 
@@ -64,6 +55,9 @@ TERMINALRANT_INSTANCE="https://your.instance" \
 TERMINALRANT_HASHTAG="terminalrant" \
 go run .
 ```
+
+On first run, TerminalRant opens a browser window for OAuth login and saves a
+session token under `TERMINALRANT_AUTH_DIR`.
 
 ### Key bindings
 
@@ -104,4 +98,3 @@ While composing inline:
 ## License
 
 TBD
-
