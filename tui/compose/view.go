@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"terminalrant/tui/common"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // View renders the compose view based on the active mode.
@@ -20,8 +22,11 @@ func (m Model) View() string {
 	case inlineMode:
 		var b strings.Builder
 		b.WriteString(common.AppTitleStyle.Render("🔥 TerminalRant"))
-		if m.isReply {
-			b.WriteString(fmt.Sprintf("  Reply to @%s\n\n", m.parentAuthor))
+		if m.isReply && m.parentSummary != "" {
+			b.WriteString(lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#555555")).
+				Italic(true).
+				Render(fmt.Sprintf("  Replying to: %s", m.parentSummary)) + "\n\n")
 		} else if m.isEdit {
 			b.WriteString("  Edit Rant\n\n")
 		} else {

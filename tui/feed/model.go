@@ -60,12 +60,14 @@ type ReplyRantMsg struct {
 
 // ThreadLoadedMsg is sent when a thread (ancestors and replies) is loaded.
 type ThreadLoadedMsg struct {
+	ID          string
 	Ancestors   []domain.Rant
 	Descendants []domain.Rant
 }
 
 // ThreadErrorMsg is sent when a thread fetch fails.
 type ThreadErrorMsg struct {
+	ID  string
 	Err error
 }
 
@@ -74,13 +76,20 @@ func (m Model) fetchThread(id string) tea.Cmd {
 	return func() tea.Msg {
 		ancestors, descendants, err := timeline.FetchThread(context.Background(), id)
 		if err != nil {
-			return ThreadErrorMsg{Err: err}
+			return ThreadErrorMsg{ID: id, Err: err}
 		}
-		return ThreadLoadedMsg{Ancestors: ancestors, Descendants: descendants}
+		return ThreadLoadedMsg{ID: id, Ancestors: ancestors, Descendants: descendants}
 	}
 }
 
-type ResetFeedStateMsg struct{}
+type ResetFeedStateMsg struct {
+	ForceReset bool
+}
+
+type threadData struct {
+	Ancestors   []domain.Rant
+	Descendants []domain.Rant
+}
 
 // ResultMsg is a generic success/fail result for creation or update.
 type ResultMsg struct {
@@ -144,6 +153,10 @@ type Model struct {
 	ancestors      []domain.Rant
 	replies        []domain.Rant
 	loadingReplies bool
+	detailCursor   int // 0 for main post, 1...n for replies
+	focusedRant    *domain.Rant
+	threadCache    map[string]threadData
+	viewStack      []*domain.Rant // To support going back in deep threading
 }
 
 // New creates a feed model with injected dependencies.
@@ -153,11 +166,12 @@ func New(timeline app.TimelineService, hashtag string) Model {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6600"))
 
 	return Model{
-		timeline: timeline,
-		hashtag:  hashtag,
-		keys:     common.DefaultKeyMap(),
-		spinner:  s,
-		loading:  true,
+		timeline:    timeline,
+		hashtag:     hashtag,
+		keys:        common.DefaultKeyMap(),
+		spinner:     s,
+		loading:     true,
+		threadCache: make(map[string]threadData),
 	}
 }
 
@@ -218,10 +232,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 						found = true
 						if ri.Status == StatusPendingDelete {
 							// Successfully deleted on server but still in list?
-							// Logic depends on if server still returns it.
-							// If server returns it, keep it as PendingDelete until it disappears.
 						} else {
-							// Update: replace with server version but maybe keep pending if local is "newer"?
 							// For simplicity, server wins once it arrives.
 							ri.Status = StatusNormal
 							newRants[i] = ri
@@ -253,12 +264,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case RantsErrorMsg:
+		m.loading = false
+		m.err = msg.Err
+		return m, nil
+
 	case AddOptimisticRantMsg:
 		newItem := RantItem{
 			Rant: domain.Rant{
 				ID:        fmt.Sprintf("local-%d", time.Now().UnixNano()),
 				Content:   msg.Content,
 				Author:    "You", // Generic placeholder
+				Username:  "you",
 				IsOwn:     true,
 				CreatedAt: time.Now(),
 			},
@@ -271,22 +288,39 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case ResetFeedStateMsg:
-		m.showDetail = false
-		m.confirmDelete = false
-		m.replies = nil
-		m.ancestors = nil
-		m.loadingReplies = false
+		if msg.ForceReset {
+			m.showDetail = false
+			m.confirmDelete = false
+			m.replies = nil
+			m.ancestors = nil
+			m.loadingReplies = false
+			m.focusedRant = nil
+			m.viewStack = nil
+		}
 		return m, nil
 
 	case ThreadLoadedMsg:
-		m.replies = msg.Descendants
+		replies := organizeThreadReplies(msg.ID, msg.Descendants)
+		m.threadCache[msg.ID] = threadData{
+			Ancestors:   msg.Ancestors,
+			Descendants: msg.Descendants,
+		}
+
+		// Ignore stale async responses for previously focused posts.
+		if msg.ID != m.getSelectedRantID() {
+			return m, nil
+		}
+
+		m.replies = replies
 		m.ancestors = msg.Ancestors
 		m.loadingReplies = false
 		return m, nil
 
 	case ThreadErrorMsg:
+		if msg.ID != m.getSelectedRantID() {
+			return m, nil
+		}
 		m.loadingReplies = false
-		// We could show a specific error for replies, but for now just silence it
 		return m, nil
 
 	case LikeRantMsg:
@@ -300,6 +334,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					ri.Rant.LikesCount++
 				}
 				m.rants[i] = ri
+				break
+			}
+		}
+		// Also search replies
+		for i, r := range m.replies {
+			if r.ID == msg.ID {
+				if r.Liked {
+					r.Liked = false
+					r.LikesCount--
+				} else {
+					r.Liked = true
+					r.LikesCount++
+				}
+				m.replies[i] = r
 				break
 			}
 		}
@@ -319,6 +367,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 						ri.Rant.LikesCount++
 					}
 					m.rants[i] = ri
+					break
+				}
+			}
+			// Also rollback replies
+			for i, r := range m.replies {
+				if r.ID == msg.ID {
+					if r.Liked {
+						r.Liked = false
+						r.LikesCount--
+					} else {
+						r.Liked = true
+						r.LikesCount++
+					}
+					m.replies[i] = r
 					break
 				}
 			}
@@ -362,6 +424,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					break
 				}
 			}
+			// Also check replies
+			for i, r := range m.replies {
+				if r.ID == msg.ID {
+					m.replies[i] = msg.Rant
+					break
+				}
+			}
 		}
 		return m, nil
 
@@ -392,12 +461,23 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Refresh):
+			if m.showDetail {
+				id := m.getSelectedRantID()
+				delete(m.threadCache, id)
+				m.replies = nil
+				m.ancestors = nil
+				m.loadingReplies = true
+				return m, m.fetchThread(id)
+			}
 			m.loading = true
 			return m, m.fetchRants()
 
 		case key.Matches(msg, m.keys.Up):
 			if m.showDetail {
-				break
+				if m.detailCursor > 0 {
+					m.detailCursor--
+				}
+				return m, nil
 			}
 			m.confirmDelete = false
 			if m.cursor > 0 {
@@ -409,7 +489,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		case key.Matches(msg, m.keys.Down):
 			if m.showDetail {
-				break
+				if m.detailCursor < len(m.replies) {
+					m.detailCursor++
+				}
+				return m, nil
 			}
 			m.confirmDelete = false
 			if m.cursor < len(m.rants)-1 {
@@ -430,20 +513,43 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.startIndex = m.cursor - visibleCount + 1
 			}
 
+		case key.Matches(msg, m.keys.Home):
+			m.showDetail = false
+			m.confirmDelete = false
+			m.cursor = 0
+			m.startIndex = 0
+			m.detailCursor = 0
+			return m, nil
+
 		case msg.String() == "enter":
 			if len(m.rants) > 0 {
-				m.showDetail = !m.showDetail
-				if m.showDetail {
-					m.loadingReplies = true
+				if !m.showDetail {
+					m.showDetail = true
+					m.detailCursor = 0
 					m.replies = nil
-					return m, m.fetchThread(m.rants[m.cursor].Rant.ID)
+					m.ancestors = nil
+					m.loadingReplies = true
+					m.focusedRant = nil
+					m.viewStack = nil
+					return m, m.loadThreadFromCacheOrFetch(m.rants[m.cursor].Rant.ID)
+				} else if m.detailCursor > 0 && m.detailCursor <= len(m.replies) {
+					// Deep threading: focus the selected reply
+					selected := m.replies[m.detailCursor-1]
+					m.viewStack = append(m.viewStack, m.focusedRant)
+					m.focusedRant = &selected
+					m.detailCursor = 0
+					m.replies = nil
+					m.ancestors = nil
+
+					m.loadingReplies = true
+					return m, m.loadThreadFromCacheOrFetch(selected.ID)
 				}
 			}
 			return m, nil
 
 		case key.Matches(msg, m.keys.Open):
-			if m.showDetail && len(m.rants) > 0 {
-				r := m.rants[m.cursor].Rant
+			if len(m.rants) > 0 {
+				r := m.getSelectedRant()
 				if r.URL != "" {
 					return m, openURL(r.URL)
 				}
@@ -471,19 +577,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if len(m.rants) == 0 {
 				break
 			}
-			return m, func() tea.Msg { return LikeRantMsg{ID: m.rants[m.cursor].Rant.ID} }
+			return m, func() tea.Msg { return LikeRantMsg{ID: m.getSelectedRantID()} }
 
 		case key.Matches(msg, m.keys.Reply):
 			if len(m.rants) == 0 {
 				break
 			}
-			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.rants[m.cursor].Rant, UseInline: false} }
+			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.getSelectedRant(), UseInline: false} }
 
 		case key.Matches(msg, m.keys.ReplyInline):
 			if len(m.rants) == 0 {
 				break
 			}
-			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.rants[m.cursor].Rant, UseInline: true} }
+			return m, func() tea.Msg { return ReplyRantMsg{Rant: m.getSelectedRant(), UseInline: true} }
 
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
@@ -496,7 +602,25 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		case msg.String() == "esc", msg.String() == "q":
 			if m.showDetail {
+				if len(m.viewStack) > 0 {
+					// Pop from stack
+					m.focusedRant = m.viewStack[len(m.viewStack)-1]
+					m.viewStack = m.viewStack[:len(m.viewStack)-1]
+					m.detailCursor = 0
+
+					id := m.rants[m.cursor].Rant.ID
+					if m.focusedRant != nil {
+						id = m.focusedRant.ID
+					}
+
+					m.replies = nil
+					m.ancestors = nil
+					m.loadingReplies = true
+					return m, m.loadThreadFromCacheOrFetch(id)
+				}
 				m.showDetail = false
+				m.focusedRant = nil
+				m.viewStack = nil
 				return m, nil
 			}
 			if msg.String() == "q" {
@@ -520,25 +644,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.confirmDelete = false
 			}
 		case msg.String() == "u":
-			if m.showDetail && len(m.ancestors) > 0 {
-				// Navigate to the immediate parent (last ancestor)
-				parent := m.ancestors[len(m.ancestors)-1]
-				// Find it in our local rants if possible, or just push it?
-				// For now, let's keep it simple and just show it as the "detail"
-				// but we'd need to update the cursor or something.
-				// Better approach: just update the cursor to the parent if it's in the list.
-				for i, ri := range m.rants {
-					if ri.Rant.ID == parent.ID {
-						m.cursor = i
-						m.replies = nil
-						m.ancestors = nil
-						m.loadingReplies = true
-						return m, m.fetchThread(parent.ID)
-					}
-				}
-				// If not in list, we could fetch it and prepend, but that's complex.
-				// Let's at least allow going back to the parent if it's in the ancestors list.
+			if !m.showDetail {
+				break
 			}
+
+			current := m.getSelectedRant()
+			selected := m.getSelectedRant()
+			parentID := selected.InReplyToID
+			if parentID == "" || parentID == "<nil>" || parentID == "0" {
+				if len(m.ancestors) == 0 {
+					break
+				}
+				parentID = m.ancestors[len(m.ancestors)-1].ID
+			}
+
+			parent, ok := m.findRantByID(parentID)
+			if !ok {
+				break
+			}
+
+			previous := current
+			m.viewStack = append(m.viewStack, &previous)
+			m.focusedRant = &parent
+			m.detailCursor = 0
+			m.replies = nil
+			m.ancestors = nil
+			m.loadingReplies = true
+			return m, m.loadThreadFromCacheOrFetch(parentID)
 		}
 	}
 
@@ -582,6 +714,60 @@ func (m Model) Rants() []domain.Rant {
 	return res
 }
 
+func (m Model) getSelectedRant() domain.Rant {
+	if m.showDetail {
+		if m.detailCursor > 0 && m.detailCursor <= len(m.replies) {
+			return m.replies[m.detailCursor-1]
+		}
+		if m.focusedRant != nil {
+			return *m.focusedRant
+		}
+	}
+	if len(m.rants) == 0 {
+		return domain.Rant{}
+	}
+	return m.rants[m.cursor].Rant
+}
+
+func (m Model) getSelectedRantID() string {
+	return m.getSelectedRant().ID
+}
+
+func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {
+	if data, ok := m.threadCache[id]; ok {
+		return func() tea.Msg {
+			return ThreadLoadedMsg{
+				ID:          id,
+				Ancestors:   data.Ancestors,
+				Descendants: data.Descendants,
+			}
+		}
+	}
+	return m.fetchThread(id)
+}
+
+func (m Model) findRantByID(id string) (domain.Rant, bool) {
+	for _, ri := range m.rants {
+		if ri.Rant.ID == id {
+			return ri.Rant, true
+		}
+	}
+	for _, r := range m.replies {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	for _, r := range m.ancestors {
+		if r.ID == id {
+			return r, true
+		}
+	}
+	if m.focusedRant != nil && m.focusedRant.ID == id {
+		return *m.focusedRant, true
+	}
+	return domain.Rant{}, false
+}
+
 // ... Loading, Err, Cursor unchanged ...
 
 // IsInDetailView returns true if the detail view is active.
@@ -595,4 +781,61 @@ func (m Model) SelectedRant() (domain.Rant, bool) {
 		return domain.Rant{}, false
 	}
 	return m.rants[m.cursor].Rant, true
+}
+
+// organizeThreadReplies flattens a thread's descendants into a nested list (depth 2).
+func organizeThreadReplies(focusedID string, descendants []domain.Rant) []domain.Rant {
+	type replyNode struct {
+		rant     domain.Rant
+		children []replyNode
+	}
+
+	nodeMap := make(map[string]*replyNode)
+	for _, r := range descendants {
+		nodeMap[r.ID] = &replyNode{rant: r}
+	}
+
+	var rootNodes []replyNode
+	for _, r := range descendants {
+		if r.InReplyToID == focusedID {
+			rootNodes = append(rootNodes, *nodeMap[r.ID])
+		}
+	}
+
+	for i := range rootNodes {
+		for _, r := range descendants {
+			if r.InReplyToID == rootNodes[i].rant.ID {
+				rootNodes[i].children = append(rootNodes[i].children, *nodeMap[r.ID])
+			}
+		}
+	}
+
+	var flatResults []domain.Rant
+	var walk func(nodes []replyNode, depth int)
+	walk = func(nodes []replyNode, depth int) {
+		for _, node := range nodes {
+			flatResults = append(flatResults, node.rant)
+			if depth < 1 { // Only nest Level 1
+				walk(node.children, depth+1)
+			}
+		}
+	}
+
+	walk(rootNodes, 0)
+
+	// Append orphans
+	for _, r := range descendants {
+		found := false
+		for _, fr := range flatResults {
+			if fr.ID == r.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			flatResults = append(flatResults, r)
+		}
+	}
+
+	return flatResults
 }

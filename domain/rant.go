@@ -5,7 +5,8 @@ import "time"
 // Rant represents a single developer rant from the timeline.
 type Rant struct {
 	ID           string
-	Author       string
+	Author       string // Display Name
+	Username     string // @handle
 	Content      string // Plain text, HTML stripped
 	CreatedAt    time.Time
 	URL          string // Original post URL

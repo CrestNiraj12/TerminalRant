@@ -41,20 +41,21 @@ type editorFinishedMsg struct {
 
 // Model holds the state for the compose view.
 type Model struct {
-	mode         mode
-	post         app.PostService
-	editor       *editor.EnvEditor
-	hashtag      string
-	status       string
-	err          error
-	textarea     textarea.Model // Only used in inline mode
-	tmpPath      string         // Temp file path for editor mode
-	isEdit       bool
-	isReply      bool
-	rantID       string
-	parentID     string
-	parentAuthor string
-	content      string // Initial content for editing
+	mode          mode
+	post          app.PostService
+	editor        *editor.EnvEditor
+	hashtag       string
+	status        string
+	err           error
+	textarea      textarea.Model // Only used in inline mode
+	tmpPath       string         // Temp file path for editor mode
+	isEdit        bool
+	isReply       bool
+	rantID        string
+	parentID      string
+	parentAuthor  string
+	parentSummary string
+	content       string // Initial content for editing
 }
 
 // NewEditor creates a compose model that opens $EDITOR via tea.Exec.
@@ -69,23 +70,24 @@ func NewEditor(post app.PostService, ed *editor.EnvEditor, hashtag string) Model
 }
 
 // NewEditorWithContent creates a compose model for editing or replying to a rant.
-func NewEditorWithContent(post app.PostService, ed *editor.EnvEditor, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string) Model {
+func NewEditorWithContent(post app.PostService, ed *editor.EnvEditor, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string, parentSummary string) Model {
 	status := "Opening editor..."
 	if isReply {
 		status = fmt.Sprintf("Replying to %s...", parentAuthor)
 	}
 	return Model{
-		mode:         editorMode,
-		post:         post,
-		editor:       ed,
-		hashtag:      hashtag,
-		status:       status,
-		isEdit:       isEdit,
-		isReply:      isReply,
-		rantID:       rantID,
-		parentID:     rantID, // For replies, rantID is the parent
-		parentAuthor: parentAuthor,
-		content:      content,
+		mode:          editorMode,
+		post:          post,
+		editor:        ed,
+		hashtag:       hashtag,
+		status:        status,
+		isEdit:        isEdit,
+		isReply:       isReply,
+		rantID:        rantID,
+		parentID:      rantID, // For replies, rantID is the parent
+		parentAuthor:  parentAuthor,
+		parentSummary: parentSummary,
+		content:       content,
 	}
 }
 
@@ -107,7 +109,7 @@ func NewInline(post app.PostService, hashtag string) Model {
 }
 
 // NewInlineWithContent creates a compose model for editing or replying to a rant inline.
-func NewInlineWithContent(post app.PostService, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string) Model {
+func NewInlineWithContent(post app.PostService, hashtag string, rantID string, content string, isEdit bool, isReply bool, parentAuthor string, parentSummary string) Model {
 	ta := textarea.New()
 	if isReply {
 		ta.Placeholder = fmt.Sprintf("Reply to %s...", parentAuthor)
@@ -119,16 +121,17 @@ func NewInlineWithContent(post app.PostService, hashtag string, rantID string, c
 	ta.Focus()
 
 	return Model{
-		mode:         inlineMode,
-		post:         post,
-		hashtag:      hashtag,
-		textarea:     ta,
-		isEdit:       isEdit,
-		isReply:      isReply,
-		rantID:       rantID,
-		parentID:     rantID, // For replies, rantID is the parent
-		parentAuthor: parentAuthor,
-		content:      content,
+		mode:          inlineMode,
+		post:          post,
+		hashtag:       hashtag,
+		textarea:      ta,
+		isEdit:        isEdit,
+		isReply:       isReply,
+		rantID:        rantID,
+		parentID:      rantID, // For replies, rantID is the parent
+		parentAuthor:  parentAuthor,
+		parentSummary: parentSummary,
+		content:       content,
 	}
 }
 

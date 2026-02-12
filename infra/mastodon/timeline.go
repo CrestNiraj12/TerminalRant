@@ -66,9 +66,15 @@ func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limi
 			author = st.Account.Acct
 		}
 
+		inReplyToID := ""
+		if st.InReplyToID != nil {
+			inReplyToID = fmt.Sprintf("%v", st.InReplyToID)
+		}
+
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
 			Author:       author,
+			Username:     st.Account.Acct,
 			Content:      stripHTML(st.Content),
 			CreatedAt:    createdAt,
 			URL:          st.URL,
@@ -76,6 +82,7 @@ func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limi
 			Liked:        st.Favourited,
 			LikesCount:   st.FavouritesCount,
 			RepliesCount: st.RepliesCount,
+			InReplyToID:  inReplyToID,
 		})
 	}
 
@@ -124,6 +131,7 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
 			Author:       author,
+			Username:     st.Account.Acct,
 			Content:      stripHTML(st.Content),
 			CreatedAt:    createdAt,
 			URL:          st.URL,

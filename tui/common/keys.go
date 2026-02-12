@@ -17,6 +17,7 @@ type KeyMap struct {
 	Up          key.Binding
 	Down        key.Binding
 	Open        key.Binding // o — open in browser
+	Home        key.Binding // h — back to top of home feed
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -73,6 +74,10 @@ func DefaultKeyMap() KeyMap {
 		Open: key.NewBinding(
 			key.WithKeys("o"),
 			key.WithHelp("o", "open"),
+		),
+		Home: key.NewBinding(
+			key.WithKeys("h"),
+			key.WithHelp("h", "home"),
 		),
 	}
 }

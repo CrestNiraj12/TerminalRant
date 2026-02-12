@@ -66,22 +66,17 @@ func (m Model) View() string {
 		for i := m.startIndex; i < endIndex; i++ {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
-			author := common.AuthorStyle.Render(rant.Author)
+			author := common.AuthorStyle.Render("@" + rant.Username)
 			if rant.IsOwn {
 				author += common.OwnBadgeStyle.Render("(you)")
 			}
 			timestamp := common.TimestampStyle.Render(rant.CreatedAt.Format("Jan 02 15:04"))
 
-			replyHint := ""
+			replyIndicator := ""
 			if rant.InReplyToID != "" && rant.InReplyToID != "<nil>" && rant.InReplyToID != "0" {
-				// We don't have the parent author in the list usually, but it might be in the content?
-				// Actually, we can just show a simpler 'Reply' indicator if we don't have the author.
-				// But let's try to extract it from the content if it starts with @user?
-				// For now, let's just make it a prominent line.
-				replyHint = "\n  " + lipgloss.NewStyle().
+				replyIndicator = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#555555")).
-					Italic(true).
-					Render("⬑ Reply")
+					Render(" ↩ reply")
 			}
 
 			statusText := ""
@@ -117,8 +112,21 @@ func (m Model) View() string {
 			}
 
 			body := strings.TrimSuffix(bodyBuilder.String(), "\n")
-			itemContent := fmt.Sprintf("%s%s  %s%s\n%s\n  %s",
-				author, statusText, timestamp, replyHint, body, common.MetadataStyle.Render(meta))
+
+			parentHint := ""
+			if rant.InReplyToID != "" && rant.InReplyToID != "<nil>" && rant.InReplyToID != "0" {
+				parentHint = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("#444444")).
+					Italic(true).
+					Render(fmt.Sprintf("  ⬑ In reply to post %s", rant.InReplyToID))
+				if len(parentHint) > 70 {
+					parentHint = parentHint[:67] + "..."
+				}
+				parentHint = "\n" + parentHint
+			}
+
+			itemContent := fmt.Sprintf("%s%s  %s%s\n%s%s\n%s",
+				author, statusText, timestamp, replyIndicator, body, parentHint, common.MetadataStyle.Render(meta))
 
 			if i == m.cursor {
 				itemContent = common.SelectedStyle.Render(itemContent)
@@ -197,8 +205,14 @@ func (m Model) renderDetailView() string {
 	if len(m.rants) == 0 {
 		return "No rant selected."
 	}
-	ri := m.rants[m.cursor]
-	r := ri.Rant
+	r := m.rants[m.cursor].Rant
+	status := m.rants[m.cursor].Status
+	err := m.rants[m.cursor].Err
+	if m.focusedRant != nil {
+		r = *m.focusedRant
+		status = StatusNormal // Focused rants from thread are usually normal
+		err = nil
+	}
 
 	var b strings.Builder
 
@@ -216,6 +230,10 @@ func (m Model) renderDetailView() string {
 	b.WriteString(title + tagline + "\n")
 
 	breadcrumb := lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, postCrumb)
+	if len(m.viewStack) > 0 {
+		depthStr := crumbStyle.Render(fmt.Sprintf(" (depth %d)", len(m.viewStack)))
+		breadcrumb = lipgloss.JoinHorizontal(lipgloss.Bottom, breadcrumb, depthStr)
+	}
 	b.WriteString(breadcrumb + "\n")
 
 	// Create a card for the content
@@ -227,16 +245,16 @@ func (m Model) renderDetailView() string {
 		Width(74)
 
 	var cardContent strings.Builder
-	cardContent.WriteString(common.AuthorStyle.Render(r.Author) + "\n")
+	cardContent.WriteString(common.AuthorStyle.Render("@"+r.Username) + " " + common.MetadataStyle.Render("("+r.Author+")") + "\n")
 	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n")
 
-	// Parent Context inside card
+	// Parent Context inside card (minimalist)
 	if len(m.ancestors) > 0 {
 		parent := m.ancestors[len(m.ancestors)-1]
 		parentIndicator := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#555555")).
 			Italic(true).
-			Render(fmt.Sprintf("⬑ Replying to @%s", parent.Author))
+			Render(fmt.Sprintf("⬑ Reply to @%s", parent.Username))
 		cardContent.WriteString(parentIndicator + "\n")
 	}
 	cardContent.WriteString("\n")
@@ -261,30 +279,123 @@ func (m Model) renderDetailView() string {
 		cardContent.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("🔗 URL: "+r.URL) + "\n")
 	}
 
-	if ri.Err != nil {
-		cardContent.WriteString("\n" + common.ErrorStyle.Render(fmt.Sprintf("⚠️ Error: %v", ri.Err)))
+	if err != nil {
+		cardContent.WriteString("\n" + common.ErrorStyle.Render(fmt.Sprintf("⚠️ Error: %v", err)))
+	}
+	if status != StatusNormal {
+		// Show status hint if not normal
+		statusText := ""
+		switch status {
+		case StatusPendingCreate:
+			statusText = " (posting...)"
+		case StatusPendingUpdate:
+			statusText = " (updating...)"
+		case StatusPendingDelete:
+			statusText = " (deleting...)"
+		}
+		if statusText != "" {
+			cardContent.WriteString("\n" + common.ConfirmStyle.Render(statusText))
+		}
 	}
 
-	b.WriteString(cardStyle.Render(cardContent.String()))
+	renderedCard := cardStyle.Render(cardContent.String())
+	if m.detailCursor == 0 {
+		renderedCard = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#FFFFFF")).
+			Padding(1, 2).
+			MarginLeft(2).
+			Width(74).
+			Render(cardContent.String())
+	}
+
+	// Parent Post Card (if available)
+	var parentView string
+	if len(m.ancestors) > 0 {
+		parent := m.ancestors[len(m.ancestors)-1]
+		parentContent := common.StripHashtag(parent.Content, m.hashtag)
+		parentSummary := truncateToTwoLines(parentContent, 66)
+
+		parentCard := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#333333")).
+			Padding(0, 1). // Use 0 padding on top/bottom to keep it compact
+			MarginLeft(2).
+			Width(74).
+			Render(fmt.Sprintf("%s %s\n%s",
+				common.AuthorStyle.Render("@"+parent.Username),
+				common.TimestampStyle.Render(parent.CreatedAt.Format("Jan 02")),
+				common.ContentStyle.Render(parentSummary)))
+
+		parentView = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render("  Parent Thread:") + "\n" + parentCard + "\n"
+	}
+
+	b.WriteString(parentView + renderedCard)
 
 	// Replies Section
 	if m.loadingReplies {
 		b.WriteString("\n\n  " + m.spinner.View() + " Loading replies...")
 	} else if len(m.replies) > 0 {
 		b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Replies") + "\n")
-		for _, r := range m.replies {
-			author := common.AuthorStyle.Render(r.Author)
-			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
-			content := common.ContentStyle.Render(common.StripHashtag(r.Content, m.hashtag))
 
-			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
-			replyContent := fmt.Sprintf("  %s %s\n  %s %s", author, timestamp, indicator, content)
+		for i, r := range m.replies {
+			// Calculate depth based on relationship to focused rant
+			depth := 0
+			if r.InReplyToID != "" && r.InReplyToID != "<nil>" && r.InReplyToID != "0" && r.InReplyToID != r.ID {
+				threadRootID := m.rants[m.cursor].Rant.ID
+				if m.focusedRant != nil {
+					threadRootID = m.focusedRant.ID
+				}
+				if r.InReplyToID != threadRootID {
+					depth = 1 // Level 2
+				}
+			}
+
+			author := common.AuthorStyle.Render("@" + r.Username)
+			timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
+			contentLines := strings.Split(common.StripHashtag(r.Content, m.hashtag), "\n")
+
+			indicatorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444"))
+			indicator := indicatorStyle.Render("┃ ")
+
+			indentPrefix := ""
+			for j := 0; j < depth; j++ {
+				indentPrefix += "  "
+			}
+
+			var replyBody strings.Builder
+			for _, line := range contentLines {
+				replyBody.WriteString("  " + indentPrefix + indicator + common.ContentStyle.Render(line) + "\n")
+			}
+
+			// Metadata for reply
+			likeIcon := "♡"
+			likeStyle := common.MetadataStyle
+			if r.Liked {
+				likeIcon = "♥"
+				likeStyle = common.LikeActiveStyle
+			}
+			meta := fmt.Sprintf("%s %d  ↩ %d",
+				likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
+
+			// Depth hint for hidden replies
+			if depth == 1 && r.RepliesCount > 0 {
+				meta += lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true).Render(" (press enter for more...)")
+			}
+
+			replyContent := fmt.Sprintf("  %s%s %s\n%s\n  %s%s",
+				indentPrefix, author, timestamp, strings.TrimSuffix(replyBody.String(), "\n"), indentPrefix, common.MetadataStyle.Render(meta))
+
+			if m.detailCursor == i+1 {
+				replyContent = lipgloss.NewStyle().
+					Background(lipgloss.Color("#333333")).
+					Foreground(lipgloss.Color("#FFFFFF")).
+					Render(replyContent)
+			}
 			b.WriteString("\n" + replyContent + "\n")
 		}
-	} else if !m.loadingReplies {
-		// b.WriteString("\n\n  No replies yet.")
 	}
-	b.WriteString("\n\n" + common.StatusBarStyle.Render("  l: like • c/C: reply • o: open • esc/q: back to list"))
+	b.WriteString("\n\n" + common.StatusBarStyle.Render("  l: like • c/C: reply • r: refresh • u: parent • o: open • h: home • esc/q: back"))
 
 	return b.String()
 }
@@ -297,7 +408,9 @@ func (m Model) helpView() string {
 			"esc: back",
 			"l: like",
 			"c/C: reply",
+			"r: refresh",
 			"o: open",
+			"h: home",
 			"q: quit",
 		}
 		if len(m.ancestors) > 0 {
@@ -311,6 +424,7 @@ func (m Model) helpView() string {
 			"c/C: reply",
 			"l: like",
 			"r: refresh",
+			"h: home",
 		}
 		r := m.rants[m.cursor].Rant
 		if r.IsOwn {

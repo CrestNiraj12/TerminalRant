@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -109,19 +110,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.status = ""
 		content := common.StripHashtag(msg.Rant.Content, a.deps.Hashtag)
 		if msg.UseInline {
-			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, content, true, false, "")
+			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, content, true, false, "", "")
 		} else {
-			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, content, true, false, "")
+			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, content, true, false, "", "")
 		}
 		return a, a.compose.Init()
 
 	case feed.ReplyRantMsg:
 		a.active = composeView
 		a.status = ""
+		parentSummary := msg.Rant.Content
+		if len(parentSummary) > 50 {
+			parentSummary = parentSummary[:47] + "..."
+		}
+		parentSummary = fmt.Sprintf("@%s: %s", msg.Rant.Username, parentSummary)
+
 		if msg.UseInline {
-			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Author)
+			a.compose = compose.NewInlineWithContent(a.deps.Post, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Username, parentSummary)
 		} else {
-			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Author)
+			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, "", false, true, msg.Rant.Username, parentSummary)
 		}
 		return a, a.compose.Init()
 
@@ -164,7 +171,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case compose.DoneMsg:
 		a.active = feedView
-		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{})
+		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{ForceReset: false})
 		if msg.Err != nil {
 			a.status = "Error: " + msg.Err.Error()
 			return a, nil
@@ -216,7 +223,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case feed.ResultMsg:
 		a.feed, _ = a.feed.Update(msg)
-		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{})
+		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{ForceReset: false})
 		if msg.Err != nil {
 			a.status = "Error: " + msg.Err.Error()
 		} else {
