@@ -8,6 +8,7 @@ type KeyMap struct {
 	ForceQuit   key.Binding // ctrl+c — force quit from any view
 	ToggleHints key.Binding // ? — toggle hidden key hints
 	Refresh     key.Binding
+	LoadMore    key.Binding // n — load older posts/replies
 	NewEditor   key.Binding // p — compose via $EDITOR
 	NewInline   key.Binding // P — compose via inline textarea
 	Edit        key.Binding // e — fast edit own post (buffer)
@@ -40,6 +41,10 @@ func DefaultKeyMap() KeyMap {
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
+		),
+		LoadMore: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "load more"),
 		),
 		NewEditor: key.NewBinding(
 			key.WithKeys("p"),

@@ -17,7 +17,11 @@ import (
 	"terminalrant/tui/common"
 )
 
-const defaultLimit = 20
+const (
+	defaultLimit    = 20
+	replyPageSize   = 20
+	prefetchTrigger = 3
+)
 
 // RantsLoadedMsg is sent when the timeline fetch completes successfully.
 type RantsLoadedMsg struct {
@@ -26,6 +30,16 @@ type RantsLoadedMsg struct {
 
 // RantsErrorMsg is sent when the timeline fetch fails.
 type RantsErrorMsg struct {
+	Err error
+}
+
+// RantsPageLoadedMsg is sent when an older feed page is loaded.
+type RantsPageLoadedMsg struct {
+	Rants []domain.Rant
+}
+
+// RantsPageErrorMsg is sent when loading an older feed page fails.
+type RantsPageErrorMsg struct {
 	Err error
 }
 
@@ -144,6 +158,9 @@ type Model struct {
 	rants          []RantItem
 	cursor         int
 	loading        bool
+	loadingMore    bool
+	hasMoreFeed    bool
+	oldestFeedID   string
 	err            error
 	keys           common.KeyMap
 	spinner        spinner.Model
@@ -153,12 +170,16 @@ type Model struct {
 	startIndex     int  // First visible item in the list (for scrolling)
 	ancestors      []domain.Rant
 	replies        []domain.Rant
+	replyAll       []domain.Rant
+	replyVisible   int
+	hasMoreReplies bool
 	loadingReplies bool
 	detailCursor   int // 0 for main post, 1...n for replies
 	focusedRant    *domain.Rant
 	threadCache    map[string]threadData
 	viewStack      []*domain.Rant // To support going back in deep threading
 	showAllHints   bool
+	pagingNotice   string
 }
 
 // New creates a feed model with injected dependencies.
@@ -173,6 +194,7 @@ func New(timeline app.TimelineService, hashtag string) Model {
 		keys:        common.DefaultKeyMap(),
 		spinner:     s,
 		loading:     true,
+		hasMoreFeed: true,
 		threadCache: make(map[string]threadData),
 	}
 }
@@ -260,7 +282,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		m.rants = append(pendingItems, newRants...)
 		m.loading = false
+		m.loadingMore = false
 		m.err = nil
+		m.pagingNotice = ""
+		m.oldestFeedID = m.lastFeedID()
+		m.hasMoreFeed = len(msg.Rants) == defaultLimit
 		if m.cursor >= len(m.rants) {
 			m.cursor = 0
 		}
@@ -268,6 +294,44 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case RantsErrorMsg:
 		m.loading = false
+		m.loadingMore = false
+		m.err = msg.Err
+		return m, nil
+
+	case RantsPageLoadedMsg:
+		m.loadingMore = false
+		m.err = nil
+		if len(msg.Rants) == 0 {
+			m.hasMoreFeed = false
+			if len(m.rants) > 0 {
+				m.pagingNotice = "🚀 End of the rantverse reached."
+			}
+			return m, nil
+		}
+		existing := make(map[string]struct{}, len(m.rants))
+		for _, ri := range m.rants {
+			existing[ri.Rant.ID] = struct{}{}
+		}
+		added := 0
+		for _, r := range msg.Rants {
+			if _, ok := existing[r.ID]; ok {
+				continue
+			}
+			m.rants = append(m.rants, RantItem{Rant: r, Status: StatusNormal})
+			added++
+		}
+		m.oldestFeedID = m.lastFeedID()
+		m.hasMoreFeed = len(msg.Rants) == defaultLimit && added > 0
+		if added == 0 && len(m.rants) > 0 {
+			m.hasMoreFeed = false
+			m.pagingNotice = "🚀 End of the rantverse reached."
+		} else if m.hasMoreFeed {
+			m.pagingNotice = ""
+		}
+		return m, nil
+
+	case RantsPageErrorMsg:
+		m.loadingMore = false
 		m.err = msg.Err
 		return m, nil
 
@@ -294,6 +358,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.showDetail = false
 			m.confirmDelete = false
 			m.replies = nil
+			m.replyAll = nil
+			m.replyVisible = 0
+			m.hasMoreReplies = false
 			m.ancestors = nil
 			m.loadingReplies = false
 			m.focusedRant = nil
@@ -305,7 +372,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		replies := organizeThreadReplies(msg.ID, msg.Descendants)
 		m.threadCache[msg.ID] = threadData{
 			Ancestors:   msg.Ancestors,
-			Descendants: msg.Descendants,
+			Descendants: replies,
 		}
 
 		// Ignore stale async responses for previously focused posts.
@@ -313,7 +380,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		m.replies = replies
+		m.replyAll = replies
+		m.replyVisible = minInt(replyPageSize, len(m.replyAll))
+		m.hasMoreReplies = m.replyVisible < len(m.replyAll)
+		m.replies = m.replyAll[:m.replyVisible]
 		m.ancestors = msg.Ancestors
 		m.loadingReplies = false
 		return m, nil
@@ -480,11 +550,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				id := m.currentThreadRootID()
 				delete(m.threadCache, id)
 				m.replies = nil
+				m.replyAll = nil
+				m.replyVisible = 0
+				m.hasMoreReplies = false
 				m.ancestors = nil
 				m.loadingReplies = true
 				return m, m.fetchThread(id)
 			}
 			m.loading = true
+			m.loadingMore = false
+			m.hasMoreFeed = true
+			m.oldestFeedID = ""
+			m.pagingNotice = ""
 			return m, m.fetchRants()
 
 		case key.Matches(msg, m.keys.Up):
@@ -507,6 +584,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if m.detailCursor < len(m.replies) {
 					m.detailCursor++
 				}
+				if m.hasMoreReplies && m.detailCursor >= len(m.replies)-prefetchTrigger {
+					m.loadMoreReplies()
+				}
 				return m, nil
 			}
 			m.confirmDelete = false
@@ -527,6 +607,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if m.cursor >= m.startIndex+visibleCount {
 				m.startIndex = m.cursor - visibleCount + 1
 			}
+			if m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
+				m.loadingMore = true
+				return m, m.fetchOlderRants()
+			}
 
 		case key.Matches(msg, m.keys.Home):
 			m.showDetail = false
@@ -542,6 +626,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.showDetail = true
 					m.detailCursor = 0
 					m.replies = nil
+					m.replyAll = nil
+					m.replyVisible = 0
+					m.hasMoreReplies = false
 					m.ancestors = nil
 					m.loadingReplies = true
 					m.focusedRant = nil
@@ -554,11 +641,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.focusedRant = &selected
 					m.detailCursor = 0
 					m.replies = nil
+					m.replyAll = nil
+					m.replyVisible = 0
+					m.hasMoreReplies = false
 					m.ancestors = nil
 
 					m.loadingReplies = true
 					return m, m.loadThreadFromCacheOrFetch(selected.ID)
 				}
+			}
+			return m, nil
+
+		case key.Matches(msg, m.keys.LoadMore):
+			if m.showDetail {
+				m.loadMoreReplies()
+				return m, nil
+			}
+			if len(m.rants) == 0 {
+				return m, nil
+			}
+			if m.loading || m.loadingMore {
+				m.pagingNotice = "⏳ Loading older posts..."
+				return m, nil
+			}
+			if !m.hasMoreFeed || m.oldestFeedID == "" {
+				m.pagingNotice = "🗂️ No older posts left."
+				return m, nil
+			}
+			if m.hasMoreFeed && m.oldestFeedID != "" {
+				m.loadingMore = true
+				return m, m.fetchOlderRants()
 			}
 			return m, nil
 
@@ -635,6 +747,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					}
 
 					m.replies = nil
+					m.replyAll = nil
+					m.replyVisible = 0
+					m.hasMoreReplies = false
 					m.ancestors = nil
 					m.loadingReplies = true
 					return m, m.loadThreadFromCacheOrFetch(id)
@@ -689,6 +804,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.focusedRant = &parent
 			m.detailCursor = 0
 			m.replies = nil
+			m.replyAll = nil
+			m.replyVisible = 0
+			m.hasMoreReplies = false
 			m.ancestors = nil
 			m.loadingReplies = true
 			return m, m.loadThreadFromCacheOrFetch(parentID)
@@ -726,6 +844,35 @@ func (m Model) fetchRants() tea.Cmd {
 	}
 }
 
+func (m *Model) loadMoreReplies() {
+	if !m.hasMoreReplies {
+		return
+	}
+	next := m.replyVisible + replyPageSize
+	if next > len(m.replyAll) {
+		next = len(m.replyAll)
+	}
+	m.replyVisible = next
+	m.replies = m.replyAll[:m.replyVisible]
+	m.hasMoreReplies = m.replyVisible < len(m.replyAll)
+}
+
+func (m Model) fetchOlderRants() tea.Cmd {
+	if m.loading || !m.hasMoreFeed || m.oldestFeedID == "" {
+		return nil
+	}
+	timeline := m.timeline
+	hashtag := m.hashtag
+	maxID := m.oldestFeedID
+	return func() tea.Msg {
+		rants, err := timeline.FetchByHashtagPage(context.Background(), hashtag, defaultLimit, maxID)
+		if err != nil {
+			return RantsPageErrorMsg{Err: err}
+		}
+		return RantsPageLoadedMsg{Rants: rants}
+	}
+}
+
 // Rants returns the current rants for external access.
 func (m Model) Rants() []domain.Rant {
 	res := make([]domain.Rant, len(m.rants))
@@ -754,6 +901,13 @@ func (m Model) getSelectedRantID() string {
 	return m.getSelectedRant().ID
 }
 
+func (m Model) lastFeedID() string {
+	if len(m.rants) == 0 {
+		return ""
+	}
+	return m.rants[len(m.rants)-1].Rant.ID
+}
+
 func (m Model) currentThreadRootID() string {
 	if m.focusedRant != nil {
 		return m.focusedRant.ID
@@ -762,6 +916,13 @@ func (m Model) currentThreadRootID() string {
 		return ""
 	}
 	return m.rants[m.cursor].Rant.ID
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {

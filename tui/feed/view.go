@@ -186,6 +186,12 @@ func (m Model) View() string {
 	b.WriteString("\n")
 	if m.loading && len(m.rants) > 0 {
 		b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
+	} else if m.loadingMore {
+		b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
+	}
+	if m.pagingNotice != "" && len(m.rants) > 0 {
+		b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
+		b.WriteString("\n")
 	}
 
 	b.WriteString(m.helpView())
@@ -388,7 +394,7 @@ func (m Model) renderDetailView() string {
 
 			// Depth hint for hidden replies
 			if depth == 1 && r.RepliesCount > 0 {
-				meta += lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true).Render(" (press enter for more...)")
+				meta += lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Italic(true).Render(" (press enter to see more replies...)")
 			}
 
 			replyContent := fmt.Sprintf("  %s%s %s\n%s\n  %s%s",
@@ -401,6 +407,15 @@ func (m Model) renderDetailView() string {
 					Render(replyContent)
 			}
 			b.WriteString("\n" + replyContent + "\n")
+		}
+		if m.hasMoreReplies {
+			remaining := len(m.replyAll) - len(m.replies)
+			if remaining < 0 {
+				remaining = 0
+			}
+			b.WriteString("\n  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render(
+				fmt.Sprintf("n: load more replies (%d remaining)", remaining),
+			))
 		}
 	}
 	b.WriteString("\n\n" + m.helpView())
@@ -436,7 +451,12 @@ func (m Model) helpView() string {
 		}
 	}
 
-	return common.StatusBarStyle.Render("  " + strings.Join(items, " • "))
+	hints := common.StatusBarStyle.Render("  " + strings.Join(items, " • "))
+	creator := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#555555")).
+		Italic(true).
+		Render("  Made by @CrestNiraj12 • https://github.com/CrestNiraj12")
+	return hints + "\n" + creator
 }
 
 func (m Model) renderKeyDialog() string {
@@ -446,6 +466,7 @@ func (m Model) renderKeyDialog() string {
 			"j/k or up/down  move focus",
 			"enter           open selected reply thread",
 			"l               like/dislike selected post",
+			"n               load more replies",
 			"c / C           reply via editor / inline",
 			"u               open parent post",
 			"r               refresh replies",
@@ -459,6 +480,7 @@ func (m Model) renderKeyDialog() string {
 		lines = []string{
 			"j/k or up/down  move focus",
 			"enter           open detail",
+			"n               load older posts",
 			"p / P           new rant via editor / inline",
 			"c / C           reply via editor / inline",
 			"l               like/dislike selected post",
@@ -476,6 +498,7 @@ func (m Model) renderKeyDialog() string {
 	} else {
 		lines = []string{
 			"p / P           new rant via editor / inline",
+			"n               load older posts (when available)",
 			"r               refresh timeline",
 			"q               quit",
 			"ctrl+c          force quit",

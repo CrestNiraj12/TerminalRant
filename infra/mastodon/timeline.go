@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -46,7 +47,14 @@ type mastodonAccount struct {
 }
 
 func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limit int) ([]domain.Rant, error) {
+	return s.FetchByHashtagPage(context.Background(), hashtag, limit, "")
+}
+
+func (s *timelineService) FetchByHashtagPage(_ context.Context, hashtag string, limit int, maxID string) ([]domain.Rant, error) {
 	path := fmt.Sprintf("/api/v1/timelines/tag/%s?limit=%d", hashtag, limit)
+	if maxID != "" {
+		path += "&max_id=" + url.QueryEscape(maxID)
+	}
 
 	data, err := s.client.Get(path)
 	if err != nil {
