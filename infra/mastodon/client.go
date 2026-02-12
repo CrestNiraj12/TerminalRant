@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"terminalrant/infra/auth"
 )
@@ -21,7 +22,9 @@ func NewClient(baseURL string, tp auth.TokenProvider) *Client {
 	return &Client{
 		baseURL:       baseURL,
 		tokenProvider: tp,
-		http:          &http.Client{},
+		http: &http.Client{
+			Timeout: 15 * time.Second,
+		},
 	}
 }
 

@@ -127,17 +127,18 @@ func (s *postService) parseStatus(data []byte) (domain.Rant, error) {
 
 	createdAt, _ := time.Parse(time.RFC3339, st.CreatedAt)
 
-	author := st.Account.DisplayName
+	author := sanitizeForTerminal(st.Account.DisplayName)
 	if author == "" {
-		author = st.Account.Acct
+		author = sanitizeForTerminal(st.Account.Acct)
 	}
 
 	return domain.Rant{
 		ID:           st.ID,
 		Author:       author,
+		Username:     sanitizeForTerminal(st.Account.Acct),
 		Content:      stripHTML(st.Content),
 		CreatedAt:    createdAt,
-		URL:          st.URL,
+		URL:          sanitizeForTerminal(st.URL),
 		Liked:        st.Favourited,
 		LikesCount:   st.FavouritesCount,
 		RepliesCount: st.RepliesCount,

@@ -2,8 +2,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds application-level configuration.
@@ -23,6 +25,14 @@ func Load() (Config, error) {
 	if instance == "" {
 		instance = "https://mastodon.social"
 	}
+	parsed, err := url.Parse(instance)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return Config{}, fmt.Errorf("invalid TERMINALRANT_INSTANCE: must be an absolute URL")
+	}
+	if parsed.Scheme != "https" {
+		return Config{}, fmt.Errorf("invalid TERMINALRANT_INSTANCE: only https is allowed")
+	}
+	instance = strings.TrimRight(parsed.String(), "/")
 
 	tokenPath := os.Getenv("TERMINALRANT_TOKEN")
 	if tokenPath == "" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"terminalrant/domain"
@@ -61,9 +62,9 @@ func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limi
 	for _, st := range statuses {
 		createdAt, _ := time.Parse(time.RFC3339, st.CreatedAt)
 
-		author := st.Account.DisplayName
+		author := sanitizeForTerminal(st.Account.DisplayName)
 		if author == "" {
-			author = st.Account.Acct
+			author = sanitizeForTerminal(st.Account.Acct)
 		}
 
 		inReplyToID := ""
@@ -74,10 +75,10 @@ func (s *timelineService) FetchByHashtag(_ context.Context, hashtag string, limi
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
 			Author:       author,
-			Username:     st.Account.Acct,
+			Username:     sanitizeForTerminal(st.Account.Acct),
 			Content:      stripHTML(st.Content),
 			CreatedAt:    createdAt,
-			URL:          st.URL,
+			URL:          sanitizeForTerminal(st.URL),
 			IsOwn:        s.currentAccountID != "" && st.Account.ID == s.currentAccountID,
 			Liked:        st.Favourited,
 			LikesCount:   st.FavouritesCount,
@@ -118,9 +119,9 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 	for _, st := range statuses {
 		createdAt, _ := time.Parse(time.RFC3339, st.CreatedAt)
 
-		author := st.Account.DisplayName
+		author := sanitizeForTerminal(st.Account.DisplayName)
 		if author == "" {
-			author = st.Account.Acct
+			author = sanitizeForTerminal(st.Account.Acct)
 		}
 
 		inReplyToID := ""
@@ -131,10 +132,10 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 		rants = append(rants, domain.Rant{
 			ID:           st.ID,
 			Author:       author,
-			Username:     st.Account.Acct,
+			Username:     sanitizeForTerminal(st.Account.Acct),
 			Content:      stripHTML(st.Content),
 			CreatedAt:    createdAt,
-			URL:          st.URL,
+			URL:          sanitizeForTerminal(st.URL),
 			IsOwn:        s.currentAccountID != "" && st.Account.ID == s.currentAccountID,
 			Liked:        st.Favourited,
 			LikesCount:   st.FavouritesCount,
@@ -150,11 +151,35 @@ func (s *timelineService) mapStatuses(statuses []mastodonStatus) []domain.Rant {
 var (
 	htmlTagRe   = regexp.MustCompile(`<[^>]*>`)
 	lineBreakRe = regexp.MustCompile(`(?i)</p>|<br\s*/?>`)
+	ansiCSIRe   = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	ansiOSCRe   = regexp.MustCompile(`\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+	ansiEscRe   = regexp.MustCompile(`\x1b[@-_]`)
 )
 
 func stripHTML(s string) string {
 	// Replace paragraph ends and breaks with newlines
 	s = lineBreakRe.ReplaceAllString(s, "\n")
 	// Strip all remaining tags
-	return htmlTagRe.ReplaceAllString(s, "")
+	s = htmlTagRe.ReplaceAllString(s, "")
+	return sanitizeForTerminal(s)
+}
+
+// sanitizeForTerminal removes ANSI escape sequences and control chars that can
+// alter terminal behavior. It preserves newlines/tabs for readable formatting.
+func sanitizeForTerminal(s string) string {
+	s = ansiOSCRe.ReplaceAllString(s, "")
+	s = ansiCSIRe.ReplaceAllString(s, "")
+	s = ansiEscRe.ReplaceAllString(s, "")
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r >= 0x20 && r != 0x7f && !(r >= 0x80 && r <= 0x9f):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
