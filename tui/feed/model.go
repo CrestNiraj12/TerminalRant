@@ -1,8 +1,16 @@
 package feed
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
+	"net/http"
 	"os/exec"
 	"strings"
 	"time"
@@ -116,6 +124,12 @@ type ThreadLoadedMsg struct {
 	ID          string
 	Ancestors   []domain.Rant
 	Descendants []domain.Rant
+}
+
+type MediaPreviewLoadedMsg struct {
+	URL     string
+	Preview string
+	Err     error
 }
 
 // ThreadErrorMsg is sent when a thread fetch fails.
@@ -256,6 +270,9 @@ type Model struct {
 	hashtagInput     bool
 	hashtagBuffer    string
 	detailStart      int
+	showMediaPreview bool
+	mediaPreview     map[string]string
+	mediaLoading     map[string]bool
 }
 
 // New creates a feed model with injected dependencies.
@@ -284,6 +301,9 @@ func New(timeline app.TimelineService, hashtag, initialSource string) Model {
 		threadCache:    make(map[string]threadData),
 		hiddenIDs:      make(map[string]bool),
 		hiddenAuthors:  make(map[string]bool),
+		showMediaPreview: true,
+		mediaPreview:     make(map[string]string),
+		mediaLoading:     make(map[string]bool),
 	}
 }
 
@@ -1445,22 +1465,60 @@ func (m Model) feedItemRenderedLines(r domain.Rant) int {
 	if strings.TrimSpace(content) == "" && len(r.Media) > 0 {
 		content = "(media post)"
 	}
+	author := common.AuthorStyle.Render("@" + r.Username)
+	timestamp := common.TimestampStyle.Render(r.CreatedAt.Format("Jan 02 15:04"))
+	replyIndicator := ""
+	if r.InReplyToID != "" && r.InReplyToID != "<nil>" && r.InReplyToID != "0" {
+		replyIndicator = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#555555")).
+			Render(" ↩ reply")
+	}
+	likeIcon := "♡"
+	likeStyle := common.MetadataStyle
+	if r.Liked {
+		likeIcon = "♥"
+		likeStyle = common.LikeActiveStyle
+	}
+	meta := fmt.Sprintf("%s %d  ↩ %d",
+		likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
+	indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
 	preview := truncateToTwoLines(content, 70)
-	previewLines := len(strings.Split(preview, "\n"))
-	if previewLines < 1 {
-		previewLines = 1
+	previewLines := strings.Split(preview, "\n")
+	var bodyBuilder strings.Builder
+	for _, line := range previewLines {
+		bodyBuilder.WriteString(indicator + common.ContentStyle.Render(line) + "\n")
 	}
-	// Header + body + metadata
-	lines := 1 + previewLines + 1
-	// Optional tag row with top/bottom padding.
-	if len(tags) > 0 {
-		lines += 3
+	body := strings.TrimSuffix(bodyBuilder.String(), "\n")
+	tagLine := renderCompactTags(tags, 2)
+	mediaLine := renderMediaCompact(r.Media)
+	itemContent := fmt.Sprintf("%s  %s%s\n%s\n%s",
+		author, timestamp, replyIndicator, body, common.MetadataStyle.Render(meta))
+	if tagLine != "" {
+		itemContent = fmt.Sprintf("%s  %s%s\n%s\n\n%s\n\n%s",
+			author, timestamp, replyIndicator, body, tagLine, common.MetadataStyle.Render(meta))
 	}
-	if len(r.Media) > 0 {
-		lines += 1
+	if mediaLine != "" {
+		itemContent = itemContent + "\n" + mediaLine
 	}
-	// Rounded border top+bottom and one spacer line between cards.
-	return lines + 3
+	rendered := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 1).
+		Render(itemContent)
+	// Add spacer line between cards in list.
+	return len(strings.Split(rendered, "\n")) + 1
+}
+
+func (m Model) currentFeedQueryKey() string {
+	switch m.feedSource {
+	case sourceTrending:
+		return "trending"
+	case sourcePersonal:
+		return "personal"
+	case sourceCustomHashtag:
+		return "tag:" + strings.ToLower(strings.TrimSpace(m.hashtag))
+	default:
+		return "tag:" + strings.ToLower(strings.TrimSpace(m.defaultHashtag))
+	}
 }
 
 func (m Model) loadThreadFromCacheOrFetch(id string) tea.Cmd {
