@@ -167,6 +167,44 @@ Dialogs:
   - `github.com/charmbracelet/bubbles`
   - `github.com/charmbracelet/lipgloss`
 
+### Testing
+
+- Run full fast suite (unit + local integration):
+
+```sh
+go test ./...
+```
+
+- Run focused race checks:
+
+```sh
+go test -race ./tui/feed ./infra/mastodon
+```
+
+- Generate coverage report:
+
+```sh
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
+```
+
+- Run optional smoke tests against a real instance:
+
+```sh
+TERMINALRANT_BASE_URL="https://your.instance" \
+TERMINALRANT_TOKEN="..." \
+go test -tags=smoke ./...
+```
+
+- Allow mutating smoke cases (post/delete):
+
+```sh
+SMOKE_ALLOW_MUTATION=true \
+TERMINALRANT_BASE_URL="https://your.instance" \
+TERMINALRANT_TOKEN="..." \
+go test -tags=smoke ./...
+```
+
 ## License
 
 TBD

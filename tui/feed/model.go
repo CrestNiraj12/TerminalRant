@@ -164,7 +164,7 @@ type ThreadLoadedMsg struct {
 }
 
 type MediaPreviewLoadedMsg struct {
-	URL     string
+	Key     string
 	Preview string
 	Err     error
 }
@@ -713,12 +713,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case MediaPreviewLoadedMsg:
-		delete(m.mediaLoading, msg.URL)
+		delete(m.mediaLoading, msg.Key)
 		if msg.Err != nil {
-			m.mediaPreview[msg.URL] = ""
+			m.mediaPreview[msg.Key] = ""
 			return m, nil
 		}
-		m.mediaPreview[msg.URL] = msg.Preview
+		m.mediaPreview[msg.Key] = msg.Preview
 		return m, nil
 
 	case HideAuthorPostsMsg:
@@ -1827,14 +1827,24 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 	}
 	cmds := make([]tea.Cmd, 0, len(urls))
 	for _, url := range urls {
-		if _, ok := m.mediaPreview[url]; ok {
+		baseKey := mediaPreviewBaseKey(url)
+		if _, ok := m.mediaPreview[baseKey]; ok {
 			continue
 		}
-		if m.mediaLoading[url] {
+		if m.mediaLoading[baseKey] {
 			continue
 		}
-		m.mediaLoading[url] = true
-		cmds = append(cmds, fetchMediaPreview(url))
+		m.mediaLoading[baseKey] = true
+		cmds = append(cmds, fetchMediaPreview(url, baseKey, 12, 6))
+	}
+	// For single-image posts, also fetch a higher-resolution preview for better quality.
+	if len(urls) == 1 {
+		url := urls[0]
+		hiKey := mediaPreviewSingleKey(url)
+		if _, ok := m.mediaPreview[hiKey]; !ok && !m.mediaLoading[hiKey] {
+			m.mediaLoading[hiKey] = true
+			cmds = append(cmds, fetchMediaPreview(url, hiKey, 24, 12))
+		}
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -1902,28 +1912,36 @@ func mediaOpenURLs(media []domain.MediaAttachment) []string {
 	return out
 }
 
-func fetchMediaPreview(url string) tea.Cmd {
+func mediaPreviewBaseKey(url string) string {
+	return "base|" + url
+}
+
+func mediaPreviewSingleKey(url string) string {
+	return "single|" + url
+}
+
+func fetchMediaPreview(url, key string, w, h int) tea.Cmd {
 	return func() tea.Msg {
 		client := &http.Client{Timeout: 6 * time.Second}
 		resp, err := client.Get(url)
 		if err != nil {
-			return MediaPreviewLoadedMsg{URL: url, Err: err}
+			return MediaPreviewLoadedMsg{Key: key, Err: err}
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return MediaPreviewLoadedMsg{URL: url, Err: fmt.Errorf("preview status %d", resp.StatusCode)}
+			return MediaPreviewLoadedMsg{Key: key, Err: fmt.Errorf("preview status %d", resp.StatusCode)}
 		}
 		data, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
 		if err != nil {
-			return MediaPreviewLoadedMsg{URL: url, Err: err}
+			return MediaPreviewLoadedMsg{Key: key, Err: err}
 		}
 		img, _, err := image.Decode(bytes.NewReader(data))
 		if err != nil {
-			return MediaPreviewLoadedMsg{URL: url, Err: err}
+			return MediaPreviewLoadedMsg{Key: key, Err: err}
 		}
 		return MediaPreviewLoadedMsg{
-			URL:     url,
-			Preview: renderANSIThumbnail(img, 8, 4),
+			Key:     key,
+			Preview: renderANSIThumbnail(img, w, h),
 		}
 	}
 }
