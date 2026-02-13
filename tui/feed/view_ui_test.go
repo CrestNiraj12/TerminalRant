@@ -46,8 +46,8 @@ func TestRenderTabs_DoesNotDuplicateDefaultTag(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.width = 120
 	out := m.renderTabs()
-	if strings.Count(strings.ToLower(out), "#terminalrant") != 1 {
-		t.Fatalf("expected single #terminalrant tab: %q", out)
+	if strings.Count(strings.ToLower(out), domain.AppHashTag) != 1 {
+		t.Fatalf("expected single "+domain.AppHashTag+" tab: %q", out)
 	}
 
 	m.hashtag = "golang"

@@ -299,6 +299,6 @@ func (m Model) emptyFeedMessage(hadData bool) string {
 			}
 			return "No posts to show."
 		}
-		return "No #terminalrant posts yet. Start the rant."
+		return "No " + domain.AppHashTag + " posts yet. Start the rant."
 	}
 }

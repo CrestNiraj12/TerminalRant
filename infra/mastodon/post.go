@@ -16,7 +16,7 @@ type postService struct {
 	client *Client
 }
 
-const requiredHashtag = "#terminalrant"
+const requiredHashtag = domain.AppHashTag
 
 // NewPostService creates a PostService backed by Mastodon.
 func NewPostService(client *Client) *postService {

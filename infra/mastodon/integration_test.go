@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"terminalrant/domain"
 	"testing"
 	"time"
 )
@@ -171,7 +172,7 @@ func TestPostService_Post_SendsForm(t *testing.T) {
 	if vals.Get("visibility") != "public" {
 		t.Fatalf("expected public visibility")
 	}
-	if !strings.Contains(strings.ToLower(vals.Get("status")), "#terminalrant") {
+	if !strings.Contains(strings.ToLower(vals.Get("status")), domain.AppHashTag) {
 		t.Fatalf("expected required hashtag in status: %q", vals.Get("status"))
 	}
 }
@@ -295,7 +296,7 @@ func TestPostService_EditDeleteLikeUnlikeReply_RequestShape(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/statuses/12":
 			body, _ := io.ReadAll(r.Body)
 			vals, _ := url.ParseQuery(string(body))
-			if vals.Get("status") == "" || !strings.Contains(strings.ToLower(vals.Get("status")), "#terminalrant") {
+			if vals.Get("status") == "" || !strings.Contains(strings.ToLower(vals.Get("status")), domain.AppHashTag) {
 				t.Fatalf("edit must include status with required hashtag, got %q", vals.Get("status"))
 			}
 			_ = json.NewEncoder(w).Encode(statusJSON("12", "acct-1", "n", "u", "edited"))

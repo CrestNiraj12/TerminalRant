@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"terminalrant/domain"
 	"terminalrant/tui/common"
 
 	"github.com/charmbracelet/lipgloss"
@@ -260,7 +261,6 @@ func (m Model) renderDetailView() string {
 	return m.renderDetailViewport(b.String())
 }
 
-
 func (m Model) renderDetailViewport(content string) string {
 	lines := strings.Split(content, "\n")
 	if m.height <= 0 {
@@ -284,4 +284,3 @@ func (m Model) renderDetailViewport(content string) string {
 	}
 	return strings.Join(visible, "\n")
 }
-

@@ -1251,7 +1251,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.prepareSourceChange()
 			switch m.feedSource {
 			case sourceTerminalRant:
-				m.pagingNotice = "Feed: #terminalrant"
+				m.pagingNotice = "Feed: " + domain.AppHashTag
 			case sourceTrending:
 				m.pagingNotice = "Feed: trending"
 			case sourceFollowing:
@@ -1275,7 +1275,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.prepareSourceChange()
 			switch m.feedSource {
 			case sourceTerminalRant:
-				m.pagingNotice = "Feed: #terminalrant"
+				m.pagingNotice = "Feed: " + domain.AppHashTag
 			case sourceTrending:
 				m.pagingNotice = "Feed: trending"
 			case sourceFollowing:
@@ -1998,7 +1998,7 @@ func renderANSIFramesFromGIF(data []byte, w, h int, maxFrames int) ([]string, er
 	}
 	n := min(len(g.Image), maxFrames)
 	frames := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		frames = append(frames, renderANSIThumbnail(g.Image[i], w, h))
 	}
 	return frames, nil
@@ -2466,10 +2466,7 @@ func (m Model) feedCardWidthsForModel() (cardWidth int, bodyWidth int) {
 		available = 44
 	}
 	cardWidth = available
-	bodyWidth = cardWidth - 10
-	if bodyWidth < 20 {
-		bodyWidth = 20
-	}
+	bodyWidth = max(cardWidth-10, 20)
 	return cardWidth, bodyWidth
 }
 
@@ -2532,10 +2529,7 @@ func (m *Model) restoreFeedTopAnchor(id string, offset int) {
 	if !found {
 		return
 	}
-	maxScroll := m.feedTotalLines(cardWidth, bodyWidth) - m.feedViewportHeight()
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := max(m.feedTotalLines(cardWidth, bodyWidth)-m.feedViewportHeight(), 0)
 	if m.scrollLine > maxScroll {
 		m.scrollLine = maxScroll
 	}
@@ -2592,14 +2586,8 @@ func (m Model) detailReplyGate() int {
 	if len(m.ancestors) > 0 {
 		mainLines += 6
 	}
-	viewHeight := m.height - 2
-	if viewHeight < 8 {
-		viewHeight = 8
-	}
-	gate := mainLines - (viewHeight - 4)
-	if gate < 0 {
-		gate = 0
-	}
+	viewHeight := max(m.height-2, 8)
+	gate := max(mainLines-(viewHeight-4), 0)
 	return gate
 }
 
@@ -2608,7 +2596,7 @@ func estimateWrappedLines(text string, width int) int {
 		width = 1
 	}
 	lines := 0
-	for _, ln := range strings.Split(text, "\n") {
+	for ln := range strings.SplitSeq(text, "\n") {
 		r := []rune(ln)
 		if len(r) == 0 {
 			lines++
@@ -2773,10 +2761,7 @@ func (m *Model) ensureDetailCursorVisible() {
 		m.detailStart = 0
 		return
 	}
-	slots := m.detailReplySlots()
-	if slots < 1 {
-		slots = 1
-	}
+	slots := max(m.detailReplySlots(), 1)
 	idx := m.detailCursor - 1
 	if idx < m.detailStart {
 		m.detailStart = idx
@@ -2784,10 +2769,7 @@ func (m *Model) ensureDetailCursorVisible() {
 	if idx >= m.detailStart+slots {
 		m.detailStart = idx - slots + 1
 	}
-	maxStart := len(m.replies) - slots
-	if maxStart < 0 {
-		maxStart = 0
-	}
+	maxStart := max(len(m.replies)-slots, 0)
 	if m.detailStart > maxStart {
 		m.detailStart = maxStart
 	}
@@ -2798,14 +2780,8 @@ func (m *Model) ensureDetailCursorVisible() {
 
 func (m Model) detailReplySlots() int {
 	// Header + parent/main card + footer/hints leave room for reply window.
-	h := m.height - 30
-	if h < 20 {
-		h = 20
-	}
-	slots := h / 5
-	if slots < 4 {
-		slots = 4
-	}
+	h := max(m.height-30, 20)
+	slots := max(h/5, 4)
 	return slots
 }
 
@@ -2818,10 +2794,7 @@ func (m *Model) ensureProfileCursorVisible() {
 		m.profileStart = 0
 		return
 	}
-	slots := m.profilePostSlots()
-	if slots < 1 {
-		slots = 1
-	}
+	slots := max(m.profilePostSlots(), 1)
 	idx := m.profileCursor - 1
 	if idx < m.profileStart {
 		m.profileStart = idx
@@ -2829,10 +2802,7 @@ func (m *Model) ensureProfileCursorVisible() {
 	if idx >= m.profileStart+slots {
 		m.profileStart = idx - slots + 1
 	}
-	maxStart := len(m.profilePosts) - slots
-	if maxStart < 0 {
-		maxStart = 0
-	}
+	maxStart := max(len(m.profilePosts)-slots, 0)
 	if m.profileStart > maxStart {
 		m.profileStart = maxStart
 	}
@@ -2842,14 +2812,8 @@ func (m *Model) ensureProfileCursorVisible() {
 }
 
 func (m Model) profilePostSlots() int {
-	h := m.height - 30
-	if h < 20 {
-		h = 20
-	}
-	slots := h / 5
-	if slots < 4 {
-		slots = 4
-	}
+	h := max(m.height-30, 20)
+	slots := max(h/5, 4)
 	return slots
 }
 
@@ -3001,7 +2965,7 @@ func (m *Model) moveCursorVisible(delta int) {
 	if delta < 0 {
 		dir = -1
 	}
-	for i := 0; i < steps; i++ {
+	for range steps {
 		next := m.cursor + dir
 		if next < 0 || next >= len(m.rants) {
 			return
@@ -3038,7 +3002,7 @@ func (m Model) isFollowing(accountID string) bool {
 func (m Model) sourceLabel() string {
 	switch m.feedSource {
 	case sourceTerminalRant:
-		return "#terminalrant"
+		return domain.AppHashTag
 	case sourceTrending:
 		return "trending"
 	case sourceFollowing:
@@ -3046,7 +3010,7 @@ func (m Model) sourceLabel() string {
 	case sourceCustomHashtag:
 		return "#" + m.hashtag
 	default:
-		return "#terminalrant"
+		return domain.AppHashTag
 	}
 }
 

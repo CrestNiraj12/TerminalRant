@@ -165,7 +165,7 @@ func (m Model) renderTabs() string {
 		label  string
 		source feedSource
 	}{
-		{label: "#terminalrant", source: sourceTerminalRant},
+		{label: domain.AppHashTag, source: sourceTerminalRant},
 		{label: "trending", source: sourceTrending},
 		{label: "following", source: sourceFollowing},
 	}

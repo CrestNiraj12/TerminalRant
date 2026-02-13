@@ -60,7 +60,7 @@ func makeRant(id string, createdAt time.Time, accountID string) domain.Rant {
 		AccountID: accountID,
 		Author:    "Author " + id,
 		Username:  "user" + id,
-		Content:   "hello #terminalrant",
+		Content:   "hello " + domain.AppHashTag,
 		CreatedAt: createdAt,
 	}
 }
@@ -274,7 +274,7 @@ func TestDetailAndProfileCursorVisibilityBounds(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.height = 44
 	m.showDetail = true
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		m.replies = append(m.replies, makeRant(fmt.Sprintf("r-%d", i), time.Now(), "acct-a"))
 	}
 	m.detailCursor = 18
@@ -288,7 +288,7 @@ func TestDetailAndProfileCursorVisibilityBounds(t *testing.T) {
 
 	m.showProfile = true
 	m.profileCursor = 16
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		m.profilePosts = append(m.profilePosts, makeRant(fmt.Sprintf("p-%d", i), time.Now(), "acct-a"))
 	}
 	m.ensureProfileCursorVisible()
@@ -335,7 +335,7 @@ func TestFeedSourceAndPrefsHelpers(t *testing.T) {
 	m.defaultHashtag = "terminalrant"
 
 	m.feedSource = sourceTerminalRant
-	if m.currentFeedQueryKey() != "tag:terminalrant" || m.sourceLabel() != "#terminalrant" || m.sourcePersistValue() != "terminalrant" {
+	if m.currentFeedQueryKey() != "tag:terminalrant" || m.sourceLabel() != domain.AppHashTag || m.sourcePersistValue() != "terminalrant" {
 		t.Fatalf("unexpected terminalrant source helpers")
 	}
 	m.feedSource = sourceTrending
