@@ -122,3 +122,44 @@ func TestRenderANSIThumbnail_HighResolutionSamplesMorePixels(t *testing.T) {
 		t.Fatalf("expected high-resolution preview to sample more pixels (%d <= %d)", highPixels, basePixels)
 	}
 }
+
+func TestMediaPreviewTargets_VideoUsesSourceWithFallback(t *testing.T) {
+	targets := mediaPreviewTargets([]domain.MediaAttachment{
+		{Type: "video", URL: "https://cdn/video.mp4", PreviewURL: "https://cdn/preview.jpg"},
+		{Type: "image", URL: "https://cdn/image.jpg", PreviewURL: "https://cdn/image-preview.jpg"},
+		{Type: "gifv", URL: "https://cdn/anim.gif", PreviewURL: "https://cdn/anim-preview.jpg"},
+	})
+	if len(targets) != 3 {
+		t.Fatalf("unexpected targets count: %d", len(targets))
+	}
+	if targets[0].URL != "https://cdn/video.mp4" || targets[0].FallbackURL != "https://cdn/preview.jpg" || !targets[0].Animated {
+		t.Fatalf("unexpected video target: %#v", targets[0])
+	}
+	if targets[1].URL != "https://cdn/image-preview.jpg" || targets[1].Animated {
+		t.Fatalf("unexpected image target: %#v", targets[1])
+	}
+	if targets[2].URL != "https://cdn/anim.gif" || !targets[2].Animated {
+		t.Fatalf("unexpected gifv target: %#v", targets[2])
+	}
+}
+
+func TestAdvanceMediaFrames_CyclesPreview(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	key := mediaPreviewBaseKey("https://cdn/video.mp4")
+	m.mediaFrames[key] = []string{"f1", "f2", "f3"}
+	m.mediaFrameIndex[key] = 0
+	m.mediaPreview[key] = "f1"
+
+	m.advanceMediaFrames()
+	if m.mediaPreview[key] != "f2" {
+		t.Fatalf("expected frame 2 after first tick, got %q", m.mediaPreview[key])
+	}
+	m.advanceMediaFrames()
+	if m.mediaPreview[key] != "f3" {
+		t.Fatalf("expected frame 3 after second tick, got %q", m.mediaPreview[key])
+	}
+	m.advanceMediaFrames()
+	if m.mediaPreview[key] != "f1" {
+		t.Fatalf("expected wrap to frame 1, got %q", m.mediaPreview[key])
+	}
+}

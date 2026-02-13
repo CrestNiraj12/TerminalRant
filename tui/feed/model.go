@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	_ "image/gif"
+	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os/exec"
+	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -166,6 +169,7 @@ type ThreadLoadedMsg struct {
 type MediaPreviewLoadedMsg struct {
 	Key     string
 	Preview string
+	Frames  []string
 	Err     error
 }
 
@@ -330,6 +334,8 @@ type Model struct {
 	profileStart     int // first visible profile post
 	showMediaPreview bool
 	mediaPreview     map[string]string
+	mediaFrames      map[string][]string
+	mediaFrameIndex  map[string]int
 	mediaLoading     map[string]bool
 	feedReqSeq       int
 }
@@ -364,6 +370,8 @@ func New(timeline app.TimelineService, account app.AccountService, hashtag, init
 		hiddenAuthors:    make(map[string]bool),
 		showMediaPreview: true,
 		mediaPreview:     make(map[string]string),
+		mediaFrames:      make(map[string][]string),
+		mediaFrameIndex:  make(map[string]int),
 		mediaLoading:     make(map[string]bool),
 	}
 }
@@ -428,6 +436,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
+		m.advanceMediaFrames()
 		return m, cmd
 
 	case RantsLoadedMsg:
@@ -716,9 +725,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		delete(m.mediaLoading, msg.Key)
 		if msg.Err != nil {
 			m.mediaPreview[msg.Key] = ""
+			delete(m.mediaFrames, msg.Key)
+			delete(m.mediaFrameIndex, msg.Key)
 			return m, nil
 		}
 		m.mediaPreview[msg.Key] = msg.Preview
+		if len(msg.Frames) > 1 {
+			m.mediaFrames[msg.Key] = msg.Frames
+			m.mediaFrameIndex[msg.Key] = 0
+		} else {
+			delete(m.mediaFrames, msg.Key)
+			delete(m.mediaFrameIndex, msg.Key)
+		}
 		return m, nil
 
 	case HideAuthorPostsMsg:
@@ -1821,13 +1839,13 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 			r = m.rants[m.cursor].Rant
 		}
 	}
-	urls := mediaPreviewURLs(r.Media)
-	if len(urls) == 0 {
+	targets := mediaPreviewTargets(r.Media)
+	if len(targets) == 0 {
 		return nil
 	}
-	cmds := make([]tea.Cmd, 0, len(urls))
-	for _, url := range urls {
-		baseKey := mediaPreviewBaseKey(url)
+	cmds := make([]tea.Cmd, 0, len(targets))
+	for _, target := range targets {
+		baseKey := mediaPreviewBaseKey(target.URL)
 		if _, ok := m.mediaPreview[baseKey]; ok {
 			continue
 		}
@@ -1835,15 +1853,15 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 			continue
 		}
 		m.mediaLoading[baseKey] = true
-		cmds = append(cmds, fetchMediaPreview(url, baseKey, 12, 6))
+		cmds = append(cmds, fetchMediaPreview(target.URL, target.FallbackURL, baseKey, 12, 6, target.Animated))
 	}
 	// For single-image posts, also fetch a higher-resolution preview for better quality.
-	if len(urls) == 1 {
-		url := urls[0]
+	if len(targets) == 1 && !targets[0].Animated {
+		url := targets[0].URL
 		hiKey := mediaPreviewSingleKey(url)
 		if _, ok := m.mediaPreview[hiKey]; !ok && !m.mediaLoading[hiKey] {
 			m.mediaLoading[hiKey] = true
-			cmds = append(cmds, fetchMediaPreview(url, hiKey, 24, 12))
+			cmds = append(cmds, fetchMediaPreview(url, "", hiKey, 24, 12, false))
 		}
 	}
 	if len(cmds) == 0 {
@@ -1869,15 +1887,38 @@ func firstMediaOpenURL(media []domain.MediaAttachment) string {
 }
 
 func mediaPreviewURLs(media []domain.MediaAttachment) []string {
-	out := make([]string, 0, len(media))
+	targets := mediaPreviewTargets(media)
+	out := make([]string, 0, len(targets))
+	for _, t := range targets {
+		out = append(out, t.URL)
+	}
+	return out
+}
+
+type mediaPreviewTarget struct {
+	URL         string
+	FallbackURL string
+	Animated    bool
+}
+
+func mediaPreviewTargets(media []domain.MediaAttachment) []mediaPreviewTarget {
+	out := make([]mediaPreviewTarget, 0, len(media))
 	seen := make(map[string]struct{}, len(media))
 	for _, m := range media {
 		t := strings.ToLower(strings.TrimSpace(m.Type))
+		animated := false
+		url := ""
 		switch t {
-		case "video", "image", "gifv":
-			url := strings.TrimSpace(m.PreviewURL)
+		case "video", "gifv":
+			animated = true
+			// Prefer the original media URL for actual video frame extraction.
+			url = strings.TrimSpace(m.URL)
 			if url == "" {
-				url = strings.TrimSpace(m.URL)
+				url = strings.TrimSpace(m.PreviewURL)
+			}
+			fallback := strings.TrimSpace(m.PreviewURL)
+			if fallback == url {
+				fallback = ""
 			}
 			if url == "" {
 				continue
@@ -1886,10 +1927,159 @@ func mediaPreviewURLs(media []domain.MediaAttachment) []string {
 				continue
 			}
 			seen[url] = struct{}{}
-			out = append(out, url)
+			out = append(out, mediaPreviewTarget{URL: url, FallbackURL: fallback, Animated: true})
+			continue
+		case "image":
+			url = strings.TrimSpace(m.PreviewURL)
+			if url == "" {
+				url = strings.TrimSpace(m.URL)
+			}
+			animated = looksLikeGIF(url)
+		default:
+			continue
 		}
+		if url == "" {
+			continue
+		}
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		seen[url] = struct{}{}
+		out = append(out, mediaPreviewTarget{URL: url, Animated: animated})
 	}
 	return out
+}
+
+func looksLikeGIF(rawURL string) bool {
+	u, err := urlParse(rawURL)
+	if err != nil {
+		return strings.Contains(strings.ToLower(rawURL), ".gif")
+	}
+	return strings.EqualFold(path.Ext(u.Path), ".gif")
+}
+
+var urlParse = func(rawURL string) (*url.URL, error) {
+	return url.Parse(rawURL)
+}
+
+func (m *Model) advanceMediaFrames() {
+	for key, frames := range m.mediaFrames {
+		if len(frames) <= 1 {
+			continue
+		}
+		m.mediaFrameIndex[key] = (m.mediaFrameIndex[key] + 1) % len(frames)
+		m.mediaPreview[key] = frames[m.mediaFrameIndex[key]]
+	}
+}
+
+var (
+	ffmpegCheckOnce sync.Once
+	ffmpegAvailable bool
+)
+
+func hasFFmpeg() bool {
+	ffmpegCheckOnce.Do(func() {
+		_, err := exec.LookPath("ffmpeg")
+		ffmpegAvailable = err == nil
+	})
+	return ffmpegAvailable
+}
+
+func renderANSIFramesFromGIF(data []byte, w, h int, maxFrames int) ([]string, error) {
+	g, err := gif.DecodeAll(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if len(g.Image) <= 1 {
+		return nil, fmt.Errorf("not animated")
+	}
+	if maxFrames <= 0 {
+		maxFrames = 8
+	}
+	n := min(len(g.Image), maxFrames)
+	frames := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		frames = append(frames, renderANSIThumbnail(g.Image[i], w, h))
+	}
+	return frames, nil
+}
+
+func renderANSIFramesFromVideo(url string, w, h int, maxFrames int) ([]string, error) {
+	if !hasFFmpeg() {
+		return nil, fmt.Errorf("ffmpeg unavailable")
+	}
+	if maxFrames <= 0 {
+		maxFrames = 8
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	filter := fmt.Sprintf("fps=4,scale=%d:%d:flags=lanczos", max(w*2, 16), max(h*2, 8))
+	cmd := exec.CommandContext(
+		ctx,
+		"ffmpeg",
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", url,
+		"-vf", filter,
+		"-frames:v", fmt.Sprintf("%d", maxFrames),
+		"-f", "gif",
+		"-",
+	)
+	data, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return renderANSIFramesFromGIF(data, w, h, maxFrames)
+}
+
+func fetchMediaPreview(url, fallbackURL, key string, w, h int, animated bool) tea.Cmd {
+	return func() tea.Msg {
+		// For video/gif media, try animated ASCII first.
+		if animated {
+			if frames, err := renderANSIFramesFromVideo(url, w, h, 8); err == nil && len(frames) > 0 {
+				return MediaPreviewLoadedMsg{Key: key, Preview: frames[0], Frames: frames}
+			}
+		}
+
+		preview, frames, err := loadStaticMediaPreview(url, w, h, animated)
+		if err == nil {
+			return MediaPreviewLoadedMsg{Key: key, Preview: preview, Frames: frames}
+		}
+		if fallbackURL != "" {
+			preview, frames, ferr := loadStaticMediaPreview(fallbackURL, w, h, false)
+			if ferr == nil {
+				return MediaPreviewLoadedMsg{Key: key, Preview: preview, Frames: frames}
+			}
+		}
+		return MediaPreviewLoadedMsg{Key: key, Err: err}
+	}
+}
+
+func loadStaticMediaPreview(url string, w, h int, allowGIFAnimation bool) (string, []string, error) {
+	client := &http.Client{Timeout: 6 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", nil, fmt.Errorf("preview status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
+	if err != nil {
+		return "", nil, err
+	}
+	if allowGIFAnimation {
+		if frames, err := renderANSIFramesFromGIF(data, w, h, 8); err == nil && len(frames) > 0 {
+			return frames[0], frames, nil
+		}
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return "", nil, err
+	}
+	return renderANSIThumbnail(img, w, h), nil, nil
 }
 
 func mediaOpenURLs(media []domain.MediaAttachment) []string {
@@ -1918,32 +2108,6 @@ func mediaPreviewBaseKey(url string) string {
 
 func mediaPreviewSingleKey(url string) string {
 	return "single|" + url
-}
-
-func fetchMediaPreview(url, key string, w, h int) tea.Cmd {
-	return func() tea.Msg {
-		client := &http.Client{Timeout: 6 * time.Second}
-		resp, err := client.Get(url)
-		if err != nil {
-			return MediaPreviewLoadedMsg{Key: key, Err: err}
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return MediaPreviewLoadedMsg{Key: key, Err: fmt.Errorf("preview status %d", resp.StatusCode)}
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
-		if err != nil {
-			return MediaPreviewLoadedMsg{Key: key, Err: err}
-		}
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if err != nil {
-			return MediaPreviewLoadedMsg{Key: key, Err: err}
-		}
-		return MediaPreviewLoadedMsg{
-			Key:     key,
-			Preview: renderANSIThumbnail(img, w, h),
-		}
-	}
 }
 
 func renderANSIThumbnail(img image.Image, w, h int) string {

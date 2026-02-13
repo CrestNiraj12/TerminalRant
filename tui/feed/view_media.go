@@ -112,7 +112,7 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Bold(true).
-		Render("Image Preview (i: toggle, I: open all)")
+		Render("Media Preview (i: toggle, I: open all)")
 	maxTiles := min(len(urls), 4)
 	tiles := make([]string, 0, maxTiles)
 	renderTile := func(i int, width int, showLabel bool) string {
