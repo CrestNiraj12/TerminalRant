@@ -25,7 +25,7 @@ func (m Model) renderDetailView() string {
 	var b strings.Builder
 
 	// Header Layout (Consistent with feed)
-	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle())
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 
 	// Active source badge, consistent with feed view.

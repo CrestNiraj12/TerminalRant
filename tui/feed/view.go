@@ -3,6 +3,7 @@ package feed
 import (
 	"fmt"
 	"strings"
+	"terminalrant/domain"
 
 	"terminalrant/tui/common"
 
@@ -44,7 +45,7 @@ func (m Model) withKeyDialog(base string) string {
 }
 
 func (m Model) renderFeedHeader() string {
-	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle())
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 	return title + tagline + "\n" + m.renderTabs() + "\n\n"
 }
@@ -114,11 +115,8 @@ func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, sh
 	listLines := strings.Split(listString, "\n")
 	viewHeight := m.feedViewportHeight()
 	// Use persisted scroll state; render must not re-anchor viewport.
-	scroll := max(m.scrollLine, 0)
 	maxScroll := max(len(listLines)-viewHeight, 0)
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
+	scroll := min(max(m.scrollLine, 0), maxScroll)
 	end := min(scroll+viewHeight, len(listLines))
 	visible := listLines[scroll:end]
 	for len(visible) < viewHeight {
@@ -127,7 +125,7 @@ func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, sh
 	gutter := m.feedGutter(scroll, end, len(listLines), len(visible))
 	contentWindow := strings.Join(visible, "\n")
 	gutterWindow := strings.Join(gutter, "\n")
-	listPane := lipgloss.JoinHorizontal(lipgloss.Top, gutterWindow, " ", contentWindow)
+	listPane := lipgloss.JoinHorizontal(lipgloss.Top, contentWindow, " ", gutterWindow)
 	if !showPreviewPanel {
 		return listPane
 	}

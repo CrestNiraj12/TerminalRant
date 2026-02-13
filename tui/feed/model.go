@@ -2341,7 +2341,7 @@ func (m Model) feedChromeLines() int {
 		return strings.Count(s, "\n") + 1
 	}
 
-	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant") + common.TaglineStyle.Render("<Why leave terminal to rant!!>")
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle()) + common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 	top := lineCount(title) + lineCount(m.renderTabs()) + 1 // trailing blank line under tabs
 
 	bottom := 1 // spacer line before status/help block

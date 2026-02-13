@@ -21,7 +21,7 @@ func (m Model) View() string {
 
 	case inlineMode:
 		var b strings.Builder
-		b.WriteString(common.AppTitleStyle.Render("🔥 TerminalRant"))
+		b.WriteString(common.AppTitleStyle.Render(domain.DisplayAppTitle()))
 		if m.isReply && m.parentSummary != "" {
 			b.WriteString(lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#555555")).

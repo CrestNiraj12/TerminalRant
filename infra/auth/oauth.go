@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"terminalrant/domain"
 	"time"
 )
 
@@ -173,7 +174,7 @@ func runOAuthAuthorization(ctx context.Context, instanceURL string, creds oauthC
 			}
 			return
 		}
-		_, _ = io.WriteString(w, "TerminalRant login complete. You can return to the terminal.")
+		_, _ = io.WriteString(w, domain.AppTitle+" login complete. You can return to the terminal.")
 		select {
 		case codeCh <- code:
 		default:

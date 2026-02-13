@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"terminalrant/domain"
 	"terminalrant/tui/common"
 
 	"github.com/charmbracelet/lipgloss"
@@ -233,7 +234,7 @@ func (m Model) renderBlockedUsersDialog() string {
 
 func (m Model) renderBlockedView() string {
 	var b strings.Builder
-	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle())
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 	hashtag := common.HashtagStyle.Margin(0, 0, 1, 2).Render(m.sourceLabel())
 	crumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).MarginBottom(1)
@@ -249,7 +250,7 @@ func (m Model) renderBlockedView() string {
 
 func (m Model) renderProfileView() string {
 	var b strings.Builder
-	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render("🔥 TerminalRant")
+	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle())
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 	b.WriteString(title + tagline + "\n")
 	b.WriteString(m.renderTabs() + "\n")
