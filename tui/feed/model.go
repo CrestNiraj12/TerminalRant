@@ -10,6 +10,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"maps"
 	"net/http"
 	"os/exec"
 	"sort"
@@ -492,17 +493,20 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = nil
 		m.pagingNotice = ""
 		m.oldestFeedID = m.lastFeedID()
-		if m.feedSource == sourceTrending {
+
+		switch m.feedSource {
+		case sourceTrending:
 			m.hasMoreFeed = len(msg.Rants) > 0
-		} else if m.feedSource == sourceFollowing {
+		case sourceFollowing:
 			raw := msg.RawCount
 			if raw == 0 {
 				raw = len(msg.Rants)
 			}
 			m.hasMoreFeed = raw == defaultLimit
-		} else {
+		default:
 			m.hasMoreFeed = len(rants) == defaultLimit
 		}
+
 		if m.cursor >= len(m.rants) {
 			m.cursor = 0
 		}
@@ -531,7 +535,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.QueryKey != m.currentFeedQueryKey() {
 			return m, nil
 		}
-		anchorScroll := m.scrollLine
+		anchorTopID, anchorOffset, anchored := m.captureFeedTopAnchor()
 		anchorID := ""
 		if len(m.rants) > 0 && m.cursor >= 0 && m.cursor < len(m.rants) {
 			anchorID = m.rants[m.cursor].Rant.ID
@@ -562,17 +566,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			added++
 		}
 		m.oldestFeedID = m.lastFeedID()
-		if m.feedSource == sourceTrending {
+		switch m.feedSource {
+		case sourceTrending:
 			m.hasMoreFeed = added > 0
-		} else if m.feedSource == sourceFollowing {
+		case sourceFollowing:
 			raw := msg.RawCount
 			if raw == 0 {
 				raw = len(msg.Rants)
 			}
-			m.hasMoreFeed = raw == defaultLimit
-		} else {
+		default:
 			m.hasMoreFeed = len(rants) == defaultLimit && added > 0
 		}
+
 		if added == 0 && len(m.rants) > 0 && m.feedSource != sourceFollowing {
 			m.hasMoreFeed = false
 			m.pagingNotice = "🚀 End of the rantverse reached."
@@ -582,9 +587,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if anchorID != "" {
 			m.setCursorByID(anchorID)
 		}
-		m.scrollLine = anchorScroll
-		if m.scrollLine < 0 {
-			m.scrollLine = 0
+		if anchored {
+			m.restoreFeedTopAnchor(anchorTopID, anchorOffset)
 		}
 		return m, m.fetchRelationshipsForRants(msg.Rants)
 
@@ -741,9 +745,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.Err != nil {
 			return m, nil
 		}
-		for id, following := range msg.Following {
-			m.followingByID[id] = following
-		}
+		maps.Copy(m.followingByID, msg.Following)
 		return m, nil
 
 	case ProfileLoadedMsg:
@@ -1173,11 +1175,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.hashtagBuffer = ""
 				m.prepareSourceChange()
 				m.pagingNotice = "Switched to #" + tag
-			m.feedReqSeq++
-			return m, tea.Batch(
-				m.fetchRants(m.feedReqSeq),
-				m.emitPrefsChanged(),
-			)
+				m.feedReqSeq++
+				return m, tea.Batch(
+					m.fetchRants(m.feedReqSeq),
+					m.emitPrefsChanged(),
+				)
 			case "backspace":
 				if len(m.hashtagBuffer) > 0 {
 					r := []rune(m.hashtagBuffer)
@@ -1800,10 +1802,7 @@ func (m *Model) loadMoreReplies() {
 	if !m.hasMoreReplies {
 		return
 	}
-	next := m.replyVisible + replyPageSize
-	if next > len(m.replyAll) {
-		next = len(m.replyAll)
-	}
+	next := min(len(m.replyAll), m.replyVisible+replyPageSize)
 	m.replyVisible = next
 	m.replies = m.replyAll[:m.replyVisible]
 	m.hasMoreReplies = m.replyVisible < len(m.replyAll)
@@ -1946,7 +1945,7 @@ func renderANSIThumbnail(img image.Image, w, h int) string {
 			sx := b.Min.X + x*b.Dx()/w
 			sy := b.Min.Y + y*b.Dy()/h
 			c := color.NRGBAModel.Convert(img.At(sx, sy)).(color.NRGBA)
-			out.WriteString(fmt.Sprintf("\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B))
+			fmt.Fprintf(&out, "\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
 		}
 		if y < h-1 {
 			out.WriteByte('\n')
@@ -2164,13 +2163,10 @@ func (m Model) feedChromeLines() int {
 	top := lineCount(title) + lineCount(m.renderTabs()) + 1 // trailing blank line under tabs
 
 	bottom := 1 // spacer line before status/help block
-	if m.loading && len(m.rants) > 0 {
-		bottom++
-	} else if m.loadingMore {
-		bottom++
-	}
-	if m.pagingNotice != "" && len(m.rants) > 0 {
-		bottom++
+	// Keep feed viewport height stable while loading/pagination state changes.
+	// Reserve fixed rows for loader and notice whenever feed has data.
+	if len(m.rants) > 0 {
+		bottom += 2
 	}
 	if m.hashtagInput {
 		bottom++
@@ -2296,23 +2292,89 @@ func (m Model) feedCardWidthsForModel() (cardWidth int, bodyWidth int) {
 }
 
 func (m Model) feedPreviewPanelVisible() bool {
-	if !m.showMediaPreview {
-		return false
+	// Match view behavior: reserve preview column whenever preview mode is on,
+	// regardless of whether current selected post has media.
+	return m.showMediaPreview
+}
+
+func (m Model) captureFeedTopAnchor() (id string, offset int, ok bool) {
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		return "", 0, false
 	}
-	r := m.getSelectedRant()
-	urls := mediaPreviewURLs(r.Media)
-	if len(urls) == 0 {
-		return false
-	}
-	for _, url := range urls {
-		if m.mediaLoading[url] {
-			return true
+	cardWidth, bodyWidth := m.feedCardWidthsForModel()
+	linePos := 0
+	for i, idx := range visible {
+		lines := m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+		top := linePos
+		bottom := top + lines - 1
+		if m.scrollLine >= top && m.scrollLine <= bottom {
+			return m.rants[idx].Rant.ID, m.scrollLine - top, true
 		}
-		if _, ok := m.mediaPreview[url]; ok {
-			return true
+		linePos += lines
+		if i < len(visible)-1 {
+			linePos += 1
 		}
 	}
-	return false
+	// Fallback: anchor to first visible item when scrollLine is out of computed bounds.
+	first := visible[0]
+	return m.rants[first].Rant.ID, 0, true
+}
+
+func (m *Model) restoreFeedTopAnchor(id string, offset int) {
+	if strings.TrimSpace(id) == "" {
+		return
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		m.scrollLine = 0
+		return
+	}
+	cardWidth, bodyWidth := m.feedCardWidthsForModel()
+	linePos := 0
+	found := false
+	for i, idx := range visible {
+		if m.rants[idx].Rant.ID == id {
+			m.scrollLine = linePos + offset
+			found = true
+			break
+		}
+		linePos += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+		if i < len(visible)-1 {
+			linePos += 1
+		}
+	}
+	if !found {
+		return
+	}
+	maxScroll := m.feedTotalLines(cardWidth, bodyWidth) - m.feedViewportHeight()
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scrollLine > maxScroll {
+		m.scrollLine = maxScroll
+	}
+	if m.scrollLine < 0 {
+		m.scrollLine = 0
+	}
+}
+
+func (m Model) feedTotalLines(cardWidth, bodyWidth int) int {
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		return 0
+	}
+	total := 0
+	for i, idx := range visible {
+		total += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+		if i < len(visible)-1 {
+			total += 1
+		}
+	}
+	return total
 }
 
 func (m Model) currentFeedQueryKey() string {

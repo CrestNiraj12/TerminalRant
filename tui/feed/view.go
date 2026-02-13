@@ -53,7 +53,7 @@ func (m Model) View() string {
 
 	// Content area
 	if m.loading && len(m.rants) == 0 {
-		b.WriteString(fmt.Sprintf("  %s Loading rants...\n", m.spinner.View()))
+		fmt.Fprintf(&b, "  %s Loading rants...\n", m.spinner.View())
 	} else if m.err != nil {
 		b.WriteString(common.ErrorStyle.Render(fmt.Sprintf("  Error: %v", m.err)))
 		b.WriteString("\n\n  Press r to retry.\n")
@@ -61,19 +61,28 @@ func (m Model) View() string {
 		b.WriteString("  " + m.emptyFeedMessage(false) + "\n")
 	} else {
 		visibleIndices := m.visibleIndices()
+		// Keep feed card width stable across selection changes. Without this,
+		// media/non-media selection flips can reflow wrapped lines and cause jumps.
+		reservePreviewColumn := m.showMediaPreview
 		showPreviewPanel := m.renderSelectedMediaPreviewPanel() != ""
-		cardWidth, bodyWidth := m.feedCardWidths(showPreviewPanel)
+		cardWidth, bodyWidth := m.feedCardWidths(reservePreviewColumn)
 		if len(visibleIndices) == 0 {
 			b.WriteString("  " + m.emptyFeedMessage(true) + "\n")
 			b.WriteString("\n")
-			if m.loading && len(m.rants) > 0 {
-				b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
-			} else if m.loadingMore {
-				b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
-			}
-			if m.pagingNotice != "" && len(m.rants) > 0 {
-				b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
-				b.WriteString("\n")
+			if len(m.rants) > 0 {
+				if m.loading {
+					fmt.Fprintf(&b, "  %s Refreshing...\n", m.spinner.View())
+				} else if m.loadingMore {
+					fmt.Fprintf(&b, "  %s Loading older posts...\n", m.spinner.View())
+				} else {
+					b.WriteString("\n")
+				}
+				if m.pagingNotice != "" {
+					b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
+					b.WriteString("\n")
+				} else {
+					b.WriteString("\n")
+				}
 			}
 			if m.hashtagInput {
 				b.WriteString(
@@ -94,9 +103,6 @@ func (m Model) View() string {
 			return base
 		}
 		var listBuilder strings.Builder
-		type lineRange struct{ top, bottom int }
-		itemRanges := make(map[int]lineRange, len(visibleIndices))
-		lineCursor := 0
 		for _, i := range visibleIndices {
 			rantItem := m.rants[i]
 			rant := rantItem.Rant
@@ -178,8 +184,8 @@ func (m Model) View() string {
 				Border(lipgloss.RoundedBorder()).
 				Padding(0, 1).
 				Width(cardWidth)
-			itemSelected := itemBase.Copy().BorderForeground(lipgloss.Color("#FF8700"))
-			itemUnselected := itemBase.Copy().BorderForeground(lipgloss.Color("#45475A"))
+			itemSelected := itemBase.BorderForeground(lipgloss.Color("#FF8700"))
+			itemUnselected := itemBase.BorderForeground(lipgloss.Color("#45475A"))
 
 			if i == m.cursor {
 				if isHiddenMarked {
@@ -208,40 +214,21 @@ func (m Model) View() string {
 
 			listBuilder.WriteString(itemContent)
 			listBuilder.WriteString("\n")
-			itemLines := len(strings.Split(itemContent, "\n"))
-			itemRanges[i] = lineRange{top: lineCursor, bottom: lineCursor + itemLines - 1}
-			lineCursor += itemLines + 1 // + spacer line between cards
 		}
 
 		listString := strings.TrimSuffix(listBuilder.String(), "\n")
 		listLines := strings.Split(listString, "\n")
 		viewHeight := m.feedViewportHeight()
-		scroll := m.scrollLine
-		if scroll < 0 {
-			scroll = 0
-		}
-		// Keep selected post fully visible. Scroll only at viewport edges.
-		if lr, ok := itemRanges[m.cursor]; ok {
-			if lr.top < scroll {
-				scroll = lr.top
-			} else if lr.bottom >= scroll+viewHeight {
-				scroll = lr.bottom - viewHeight + 1
-			}
-		}
-		maxScroll := len(listLines) - viewHeight
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
+		// Use persisted scroll state; render must not re-anchor viewport.
+		scroll := max(m.scrollLine, 0)
+		maxScroll := max(len(listLines)-viewHeight, 0)
 		if scroll > maxScroll {
 			scroll = maxScroll
 		}
 		if scroll < 0 {
 			scroll = 0
 		}
-		end := scroll + viewHeight
-		if end > len(listLines) {
-			end = len(listLines)
-		}
+		end := min(scroll+viewHeight, len(listLines))
 		visible := listLines[scroll:end]
 		for len(visible) < viewHeight {
 			visible = append(visible, "")
@@ -274,14 +261,20 @@ func (m Model) View() string {
 	}
 
 	b.WriteString("\n")
-	if m.loading && len(m.rants) > 0 {
-		b.WriteString(fmt.Sprintf("  %s Refreshing...\n", m.spinner.View()))
-	} else if m.loadingMore {
-		b.WriteString(fmt.Sprintf("  %s Loading older posts...\n", m.spinner.View()))
-	}
-	if m.pagingNotice != "" && len(m.rants) > 0 {
-		b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
-		b.WriteString("\n")
+	if len(m.rants) > 0 {
+		if m.loading {
+			fmt.Fprintf(&b, "  %s Refreshing...\n", m.spinner.View())
+		} else if m.loadingMore {
+			fmt.Fprintf(&b, "  %s Loading older posts...\n", m.spinner.View())
+		} else {
+			b.WriteString("\n")
+		}
+		if m.pagingNotice != "" {
+			b.WriteString(common.StatusBarStyle.Render("  " + m.pagingNotice))
+			b.WriteString("\n")
+		} else {
+			b.WriteString("\n")
+		}
 	}
 	if m.hashtagInput {
 		b.WriteString(
@@ -319,10 +312,10 @@ func truncateToTwoLines(text string, width int) string {
 	return strings.Join(lines[:2], "\n") + "..."
 }
 
-func (m Model) feedCardWidths(showPreviewPanel bool) (cardWidth int, bodyWidth int) {
+func (m Model) feedCardWidths(reservePreviewColumn bool) (cardWidth int, bodyWidth int) {
 	// listPane = gutter + spacer + cards (+ optional preview pane)
 	available := m.width - 4 // gutter + spacer + a little safety
-	if showPreviewPanel {
+	if reservePreviewColumn {
 		available -= 58 // preview width + gap
 	}
 	if available < 44 {
@@ -330,10 +323,7 @@ func (m Model) feedCardWidths(showPreviewPanel bool) (cardWidth int, bodyWidth i
 	}
 	cardWidth = available
 	// Rounded border + horizontal padding consume a few columns.
-	bodyWidth = cardWidth - 10
-	if bodyWidth < 20 {
-		bodyWidth = 20
-	}
+	bodyWidth = max(cardWidth-10, 20)
 	return cardWidth, bodyWidth
 }
 
@@ -656,10 +646,7 @@ func (m Model) helpView() string {
 		}
 	}
 
-	wrapWidth := m.width - 2
-	if wrapWidth < 16 {
-		wrapWidth = 16
-	}
+	wrapWidth := max(m.width-2, 16)
 	hints := common.StatusBarStyle.
 		Width(wrapWidth).
 		Render("  " + strings.Join(items, " • "))
@@ -859,25 +846,10 @@ func (m Model) renderDetailViewport(content string) string {
 	if m.height <= 0 {
 		return content
 	}
-	viewHeight := m.height - 2
-	if viewHeight < 8 {
-		viewHeight = 8
-	}
-	maxScroll := len(lines) - viewHeight
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	scroll := m.detailScrollLine
-	if scroll < 0 {
-		scroll = 0
-	}
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
-	end := scroll + viewHeight
-	if end > len(lines) {
-		end = len(lines)
-	}
+	viewHeight := max(m.height-2, 8)
+	maxScroll := max(len(lines)-viewHeight, 0)
+	scroll := min(max(m.detailScrollLine, 0), maxScroll)
+	end := min(scroll+viewHeight, len(lines))
 	visible := lines[scroll:end]
 	for len(visible) < viewHeight {
 		visible = append(visible, "")
@@ -1032,7 +1004,7 @@ func (m Model) renderProfileView() string {
 		MarginLeft(2).
 		Width(74)
 	if m.profileCursor == 0 {
-		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#FF8700"))
+		cardStyle = cardStyle.BorderForeground(lipgloss.Color("#FF8700"))
 	}
 
 	var card strings.Builder
@@ -1065,15 +1037,9 @@ func (m Model) renderProfileView() string {
 	if len(m.profilePosts) == 0 {
 		b.WriteString("\n  No posts.\n")
 	} else {
-		start := m.profileStart
-		if start < 0 {
-			start = 0
-		}
+		start := max(m.profileStart, 0)
 		slots := m.profilePostSlots()
-		end := start + slots
-		if end > len(m.profilePosts) {
-			end = len(m.profilePosts)
-		}
+		end := min(start+slots, len(m.profilePosts))
 		if start > 0 {
 			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more posts above") + "\n")
 		}
