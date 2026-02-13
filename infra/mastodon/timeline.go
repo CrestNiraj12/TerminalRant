@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"regexp"
 	"strings"
@@ -253,6 +254,8 @@ func stripHTML(s string) string {
 	s = lineBreakRe.ReplaceAllString(s, "\n")
 	// Strip all remaining tags
 	s = htmlTagRe.ReplaceAllString(s, "")
+	// Decode HTML entities like &lt; &gt; &amp;
+	s = html.UnescapeString(s)
 	return sanitizeForTerminal(s)
 }
 

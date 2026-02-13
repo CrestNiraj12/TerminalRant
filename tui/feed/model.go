@@ -2184,13 +2184,40 @@ func (m *Model) ensureFeedCursorVisible() {
 	if m.showDetail {
 		return
 	}
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		m.scrollLine = 0
+		return
+	}
 	m.ensureVisibleCursor()
+	cardWidth, bodyWidth := m.feedCardWidthsForModel()
+	top := 0
+	bottom := 0
+	linePos := 0
+	for i, idx := range visible {
+		if idx == m.cursor {
+			lines := m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+			top = linePos
+			bottom = linePos + lines - 1
+			break
+		}
+		linePos += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+		if i < len(visible)-1 {
+			linePos += 1
+		}
+	}
+	viewHeight := m.feedViewportHeight()
+	if top < m.scrollLine {
+		m.scrollLine = top
+	} else if bottom >= m.scrollLine+viewHeight {
+		m.scrollLine = bottom - viewHeight + 1
+	}
 	if m.scrollLine < 0 {
 		m.scrollLine = 0
 	}
 }
 
-func (m Model) feedItemRenderedLines(r domain.Rant) int {
+func (m Model) feedItemRenderedLines(r domain.Rant, cardWidth, bodyWidth int) int {
 	content, tags := splitContentAndTags(r.Content)
 	if strings.TrimSpace(content) == "" && len(r.Media) > 0 {
 		content = "(media post)"
@@ -2212,7 +2239,7 @@ func (m Model) feedItemRenderedLines(r domain.Rant) int {
 	meta := fmt.Sprintf("%s %d  ↩ %d",
 		likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
 	indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
-	preview := truncateToTwoLines(content, 70)
+	preview := truncateToTwoLinesForWidth(content, bodyWidth)
 	previewLines := strings.Split(preview, "\n")
 	var bodyBuilder strings.Builder
 	for _, line := range previewLines {
@@ -2233,9 +2260,59 @@ func (m Model) feedItemRenderedLines(r domain.Rant) int {
 	rendered := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1).
+		Width(cardWidth).
 		Render(itemContent)
 	// Add spacer line between cards in list.
 	return len(strings.Split(rendered, "\n")) + 1
+}
+
+func truncateToTwoLinesForWidth(text string, width int) string {
+	if width < 12 {
+		width = 12
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(text)
+	lines := strings.Split(wrapped, "\n")
+	if len(lines) <= 2 {
+		return wrapped
+	}
+	return strings.Join(lines[:2], "\n") + "..."
+}
+
+func (m Model) feedCardWidthsForModel() (cardWidth int, bodyWidth int) {
+	showPreviewPanel := m.feedPreviewPanelVisible()
+	available := m.width - 4
+	if showPreviewPanel {
+		available -= 58
+	}
+	if available < 44 {
+		available = 44
+	}
+	cardWidth = available
+	bodyWidth = cardWidth - 10
+	if bodyWidth < 20 {
+		bodyWidth = 20
+	}
+	return cardWidth, bodyWidth
+}
+
+func (m Model) feedPreviewPanelVisible() bool {
+	if !m.showMediaPreview {
+		return false
+	}
+	r := m.getSelectedRant()
+	urls := mediaPreviewURLs(r.Media)
+	if len(urls) == 0 {
+		return false
+	}
+	for _, url := range urls {
+		if m.mediaLoading[url] {
+			return true
+		}
+		if _, ok := m.mediaPreview[url]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) currentFeedQueryKey() string {
