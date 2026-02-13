@@ -1,0 +1,22 @@
+# Go build/test artifacts
+*.test
+*.out
+cover.out
+coverage.out
+coverage-func.txt
+
+# Local Go caches
+.gocache/
+
+# macOS
+.DS_Store
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local env files
+.env
+.env.*
