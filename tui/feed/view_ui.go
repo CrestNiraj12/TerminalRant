@@ -67,20 +67,21 @@ func (m Model) helpView() string {
 }
 
 func (m Model) renderKeyDialog() string {
-	var lines []string
+	var (
+		core        []string
+		includeMove bool
+	)
 	if m.showProfile {
-		lines = []string{
-			"j/k or up/down  move focus",
+		includeMove = true
+		core = []string{
 			"enter           open selected post detail",
 			"f               follow/unfollow profile owner",
 			"B               show blocked users",
 			"esc / q         back",
-			"ctrl+c          force quit",
-			"?               toggle this dialog",
 		}
 	} else if m.showDetail {
-		lines = []string{
-			"j/k or up/down  move focus",
+		includeMove = true
+		core = []string{
 			"enter           open selected reply thread",
 			"l               like/dislike selected post",
 			"f               follow/unfollow selected user",
@@ -100,12 +101,10 @@ func (m Model) renderKeyDialog() string {
 			"h               scroll to top of post",
 			"H               go to feed home",
 			"esc / q         back",
-			"ctrl+c          force quit",
-			"?               toggle this dialog",
 		}
 	} else if len(m.rants) > 0 {
-		lines = []string{
-			"j/k or up/down  move focus",
+		includeMove = true
+		core = []string{
 			"enter           open detail",
 			"t / T           next/prev tab",
 			"i               toggle image previews",
@@ -126,15 +125,13 @@ func (m Model) renderKeyDialog() string {
 			"g               open creator GitHub",
 			"h               jump to top",
 			"q               quit",
-			"ctrl+c          force quit",
-			"?               toggle this dialog",
 		}
 		r := m.rants[m.cursor].Rant
 		if r.IsOwn {
-			lines = append(lines, "e / E           edit via editor / inline", "d               delete selected post")
+			core = append(core, "e / E           edit via editor / inline", "d               delete selected post")
 		}
 	} else {
-		lines = []string{
+		core = []string{
 			"p / P           new rant via editor / inline",
 			"t / T           next/prev tab",
 			"i               toggle image previews",
@@ -146,10 +143,9 @@ func (m Model) renderKeyDialog() string {
 			"r               refresh timeline",
 			"g               open creator GitHub",
 			"q               quit",
-			"ctrl+c          force quit",
-			"?               toggle this dialog",
 		}
 	}
+	lines := buildKeyDialogLines(core, includeMove)
 
 	body := "Keyboard Shortcuts\n\n" + strings.Join(lines, "\n") + "\n\nPress ?, esc, q, or enter to close."
 	return lipgloss.NewStyle().
@@ -158,6 +154,17 @@ func (m Model) renderKeyDialog() string {
 		Padding(1, 2).
 		Margin(1, 2).
 		Render(body)
+}
+
+func buildKeyDialogLines(core []string, includeMove bool) []string {
+	out := make([]string, 0, len(core)+5)
+	if includeMove {
+		out = append(out, "j/k or up/down  move focus")
+	}
+	out = append(out, "left/right      pan horizontally")
+	out = append(out, core...)
+	out = append(out, "ctrl+c          force quit", "?               toggle this dialog")
+	return out
 }
 
 func (m Model) renderTabs() string {
