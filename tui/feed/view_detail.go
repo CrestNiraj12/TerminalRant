@@ -182,9 +182,12 @@ func (m Model) renderDetailView() string {
 
 	postBlock := parentView + renderedCard
 	if panel := m.renderSelectedMediaPreviewPanel(); panel != "" {
+		leftHeight := max(lipgloss.Height(postBlock), 1)
+		preview := clipLines(panel, leftHeight)
 		previewPane := lipgloss.NewStyle().
 			Width(56).
-			Render(panel)
+			MaxHeight(leftHeight).
+			Render(preview)
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, postBlock, "  ", previewPane))
 	} else {
 		b.WriteString(postBlock)
