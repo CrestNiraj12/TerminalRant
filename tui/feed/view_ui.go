@@ -249,7 +249,6 @@ func (m Model) renderBlockedView() string {
 	blockedCrumb := crumbStyle.Render("Blocked Users")
 
 	b.WriteString(title + tagline + "\n")
-	b.WriteString(m.renderTabs() + "\n")
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, blockedCrumb) + "\n\n")
 	b.WriteString(m.renderBlockedUsersDialog())
 	return b.String()
@@ -260,7 +259,6 @@ func (m Model) renderProfileView() string {
 	title := common.AppTitleStyle.Padding(1, 0, 0, 1).Render(domain.DisplayAppTitle())
 	tagline := common.TaglineStyle.Render("<Why leave terminal to rant!!>")
 	b.WriteString(title + tagline + "\n")
-	b.WriteString(m.renderTabs() + "\n")
 	crumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).MarginBottom(1)
 	separator := crumbStyle.Render(" > ")
 	profileLabel := "Profile"

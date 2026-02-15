@@ -37,7 +37,6 @@ func (m Model) renderDetailView() string {
 	postCrumb := crumbStyle.Render(fmt.Sprintf("Post %s", r.ID))
 
 	b.WriteString(title + tagline + "\n")
-	b.WriteString(m.renderTabs() + "\n")
 
 	breadcrumb := lipgloss.JoinHorizontal(lipgloss.Bottom, hashtag, separator, postCrumb)
 	if len(m.viewStack) > 0 {
