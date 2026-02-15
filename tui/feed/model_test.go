@@ -187,6 +187,55 @@ func TestDownNearPrefetchTrigger_StartsLoadingOlderPosts(t *testing.T) {
 	}
 }
 
+func TestEnsureFeedCursorVisible_OldSchoolItemStep(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.width = 120
+	m.height = 56
+	m.showMediaPreview = false
+	m.loading = false
+	now := time.Now()
+	for i := range 10 {
+		m.rants = append(m.rants, RantItem{
+			Rant:   makeRant(fmt.Sprintf("id-%d", i), now.Add(-time.Duration(i)*time.Minute), "acct-a"),
+			Status: StatusNormal,
+		})
+	}
+
+	m.cursor = 0
+	m.scrollLine = 0
+	m.ensureFeedCursorVisible()
+	if m.scrollLine != 0 {
+		t.Fatalf("expected initial scroll to remain at top, got %d", m.scrollLine)
+	}
+
+	visible := m.visibleIndices()
+	spans := m.feedVisibleSpans(visible)
+	if len(spans) < 3 {
+		t.Fatalf("expected enough items for stepping test, got %d", len(spans))
+	}
+
+	lastVisiblePos := m.feedVisibleSlotsFrom(spans, 0, m.feedViewportHeight()) - 1
+	if lastVisiblePos <= 0 || lastVisiblePos >= len(spans)-1 {
+		t.Fatalf("need a partially visible window to test stepping; lastVisiblePos=%d len=%d", lastVisiblePos, len(spans))
+	}
+
+	// Move to last item currently visible: should not scroll.
+	m.cursor = spans[lastVisiblePos].idx
+	m.ensureFeedCursorVisible()
+	scrollBefore := m.scrollLine
+	if scrollBefore != 0 {
+		t.Fatalf("expected no scroll while selection stays inside window, got %d", scrollBefore)
+	}
+
+	// Move one item past the current window: should scroll by exactly one item.
+	m.cursor = spans[lastVisiblePos+1].idx
+	m.ensureFeedCursorVisible()
+	want := spans[1].top
+	if m.scrollLine != want {
+		t.Fatalf("expected one-item step scroll=%d, got %d", want, m.scrollLine)
+	}
+}
+
 func TestFollowToggleResultInFollowing_RefreshesFeedState(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "following")
 	m.feedSource = sourceFollowing

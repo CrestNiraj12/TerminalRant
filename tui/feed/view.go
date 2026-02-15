@@ -105,25 +105,41 @@ func (m Model) renderHashtagInputBar() string {
 }
 
 func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, showPreviewPanel bool) string {
+	viewHeight := m.feedViewportHeight()
+	spans := m.feedVisibleSpans(visibleIndices)
+	if len(spans) == 0 {
+		return strings.Repeat("\n", max(viewHeight-1, 0))
+	}
+
+	startPos := m.startIndex
+	if startPos < 0 || startPos >= len(spans) {
+		startPos = m.feedStartPosFromScrollLine(spans, m.scrollLine)
+	}
+	if spans[startPos].top != m.scrollLine {
+		startPos = m.feedStartPosFromScrollLine(spans, m.scrollLine)
+	}
+
 	var listBuilder strings.Builder
-	for _, i := range visibleIndices {
-		listBuilder.WriteString(m.renderFeedCard(i, cardWidth, bodyWidth))
+	for pos := startPos; pos < len(spans); pos++ {
+		idx := spans[pos].idx
+		listBuilder.WriteString(m.renderFeedCard(idx, cardWidth, bodyWidth))
 		listBuilder.WriteString("\n")
 	}
 
 	listString := strings.TrimSuffix(listBuilder.String(), "\n")
-	listLines := strings.Split(listString, "\n")
-	viewHeight := m.feedViewportHeight()
-	// Use persisted scroll state; render must not re-anchor viewport.
-	maxScroll := max(len(listLines)-viewHeight, 0)
-	scroll := min(max(m.scrollLine, 0), maxScroll)
-	end := min(scroll+viewHeight, len(listLines))
-	visible := listLines[scroll:end]
-	for len(visible) < viewHeight {
-		visible = append(visible, "")
+	listLines := []string{}
+	if listString != "" {
+		listLines = strings.Split(listString, "\n")
 	}
-	gutter := m.feedGutter(scroll, end, len(listLines), len(visible))
-	contentWindow := strings.Join(visible, "\n")
+	content := listLines
+	if len(content) > viewHeight {
+		content = content[:viewHeight]
+	}
+	for len(content) < viewHeight {
+		content = append(content, "")
+	}
+	gutter := m.feedGutter(startPos > 0, len(listLines) > viewHeight, len(content))
+	contentWindow := strings.Join(content, "\n")
 	gutterWindow := strings.Join(gutter, "\n")
 	listPane := lipgloss.JoinHorizontal(lipgloss.Top, contentWindow, " ", gutterWindow)
 	if !showPreviewPanel {
@@ -138,16 +154,16 @@ func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, sh
 	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, "  ", previewPane)
 }
 
-func (m Model) feedGutter(scroll, end, total, visibleCount int) []string {
+func (m Model) feedGutter(showUp, showDown bool, visibleCount int) []string {
 	markerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 	gutter := make([]string, visibleCount)
 	for i := range gutter {
 		gutter[i] = " "
 	}
-	if scroll > 0 && len(gutter) > 0 {
+	if showUp && len(gutter) > 0 {
 		gutter[0] = markerStyle.Render("▲")
 	}
-	if end < total && len(gutter) > 0 {
+	if showDown && len(gutter) > 0 {
 		gutter[len(gutter)-1] = markerStyle.Render("▼")
 	}
 	return gutter

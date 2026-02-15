@@ -1389,10 +1389,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.confirmDelete = false
 			m.moveCursorVisible(1)
 			m.ensureFeedCursorVisible()
-			if !m.loading && len(m.rants) > 0 && m.oldestFeedID != "" && m.hasMoreFeed && !m.loadingMore && m.cursor >= len(m.rants)-prefetchTrigger {
-				m.loadingMore = true
-				m.feedReqSeq++
-				return m, tea.Batch(m.fetchOlderRants(m.feedReqSeq), m.ensureMediaPreviewCmd())
+			loadMore := m.maybeStartFeedPrefetch()
+			if loadMore != nil {
+				return m, tea.Batch(loadMore, m.ensureMediaPreviewCmd())
 			}
 			return m, m.ensureMediaPreviewCmd()
 
@@ -2368,31 +2367,152 @@ func (m *Model) ensureFeedCursorVisible() {
 		return
 	}
 	m.ensureVisibleCursor()
-	cardWidth, bodyWidth := m.feedCardWidthsForModel()
-	top := 0
-	bottom := 0
-	linePos := 0
-	for i, idx := range visible {
-		if idx == m.cursor {
-			lines := m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
-			top = linePos
-			bottom = linePos + lines - 1
-			break
-		}
-		linePos += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
-		if i < len(visible)-1 {
-			linePos += 1
-		}
+	spans := m.feedVisibleSpans(visible)
+	if len(spans) == 0 {
+		m.scrollLine = 0
+		return
 	}
 	viewHeight := m.feedViewportHeight()
-	if top < m.scrollLine {
-		m.scrollLine = top
-	} else if bottom >= m.scrollLine+viewHeight {
-		m.scrollLine = bottom - viewHeight + 1
+	totalLines := spans[len(spans)-1].bottom + 1
+	maxScroll := max(totalLines-viewHeight, 0)
+	selectedPos := -1
+	for i := range spans {
+		if spans[i].idx == m.cursor {
+			selectedPos = i
+			break
+		}
+	}
+	if selectedPos < 0 {
+		return
+	}
+
+	if m.startIndex < 0 || m.startIndex >= len(spans) {
+		m.startIndex = m.feedStartPosFromScrollLine(spans, m.scrollLine)
+	}
+	// If another code path changed scrollLine (anchor restore, resize), realign
+	// the item window anchor from the current line offset.
+	if spans[m.startIndex].top != m.scrollLine {
+		m.startIndex = m.feedStartPosFromScrollLine(spans, m.scrollLine)
+	}
+
+	if selectedPos < m.startIndex {
+		m.startIndex = selectedPos
+	} else {
+		slots := m.feedVisibleSlotsFrom(spans, m.startIndex, viewHeight)
+		if slots < 1 {
+			slots = 1
+		}
+		last := m.startIndex + slots - 1
+		if selectedPos > last {
+			m.startIndex += selectedPos - last
+		}
+	}
+	if m.startIndex < 0 {
+		m.startIndex = 0
+	}
+	if m.startIndex >= len(spans) {
+		m.startIndex = len(spans) - 1
+	}
+
+	m.scrollLine = spans[m.startIndex].top
+
+	if m.scrollLine > maxScroll {
+		m.scrollLine = maxScroll
 	}
 	if m.scrollLine < 0 {
 		m.scrollLine = 0
 	}
+}
+
+func (m Model) feedStartPosFromScrollLine(spans []feedItemSpan, scrollLine int) int {
+	if len(spans) == 0 {
+		return 0
+	}
+	if scrollLine <= 0 {
+		return 0
+	}
+	for i := range spans {
+		if spans[i].bottom >= scrollLine {
+			return i
+		}
+	}
+	return len(spans) - 1
+}
+
+func (m Model) feedVisibleSlotsFrom(spans []feedItemSpan, startPos, viewHeight int) int {
+	if len(spans) == 0 || startPos < 0 || startPos >= len(spans) {
+		return 0
+	}
+	if viewHeight < 1 {
+		viewHeight = 1
+	}
+	windowTop := spans[startPos].top
+	windowBottom := windowTop + viewHeight - 1
+	slots := 0
+	for i := startPos; i < len(spans); i++ {
+		// Only count cards that fully fit inside the viewport.
+		if spans[i].bottom > windowBottom {
+			break
+		}
+		slots++
+	}
+	return slots
+}
+
+type feedItemSpan struct {
+	idx    int
+	top    int
+	bottom int
+}
+
+func (m Model) feedVisibleSpans(visible []int) []feedItemSpan {
+	if len(visible) == 0 {
+		return nil
+	}
+	cardWidth, bodyWidth := m.feedCardWidthsForModel()
+	spans := make([]feedItemSpan, 0, len(visible))
+	linePos := 0
+	for i, idx := range visible {
+		lines := m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
+		top := linePos
+		bottom := top + lines - 1
+		spans = append(spans, feedItemSpan{
+			idx:    idx,
+			top:    top,
+			bottom: bottom,
+		})
+		linePos += lines
+		if i < len(visible)-1 {
+			linePos += 1
+		}
+	}
+	return spans
+}
+
+func (m *Model) maybeStartFeedPrefetch() tea.Cmd {
+	if m.loading || m.loadingMore || len(m.rants) == 0 {
+		return nil
+	}
+	if !m.hasMoreFeed || m.oldestFeedID == "" {
+		return nil
+	}
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		return nil
+	}
+	selectedPos := -1
+	for i, idx := range visible {
+		if idx == m.cursor {
+			selectedPos = i
+			break
+		}
+	}
+	if selectedPos < 0 || selectedPos < len(visible)-prefetchTrigger {
+		return nil
+	}
+	m.loadingMore = true
+	m.feedReqSeq++
+	return m.fetchOlderRants(m.feedReqSeq)
 }
 
 func (m Model) feedItemRenderedLines(r domain.Rant, cardWidth, bodyWidth int) int {
@@ -2481,23 +2601,16 @@ func (m Model) captureFeedTopAnchor() (id string, offset int, ok bool) {
 	if len(visible) == 0 {
 		return "", 0, false
 	}
-	cardWidth, bodyWidth := m.feedCardWidthsForModel()
-	linePos := 0
-	for i, idx := range visible {
-		lines := m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
-		top := linePos
-		bottom := top + lines - 1
-		if m.scrollLine >= top && m.scrollLine <= bottom {
-			return m.rants[idx].Rant.ID, m.scrollLine - top, true
-		}
-		linePos += lines
-		if i < len(visible)-1 {
-			linePos += 1
-		}
+	spans := m.feedVisibleSpans(visible)
+	if len(spans) == 0 {
+		return "", 0, false
 	}
-	// Fallback: anchor to first visible item when scrollLine is out of computed bounds.
-	first := visible[0]
-	return m.rants[first].Rant.ID, 0, true
+	startPos := m.startIndex
+	if startPos < 0 || startPos >= len(spans) {
+		startPos = m.feedStartPosFromScrollLine(spans, m.scrollLine)
+	}
+	idx := spans[startPos].idx
+	return m.rants[idx].Rant.ID, 0, true
 }
 
 func (m *Model) restoreFeedTopAnchor(id string, offset int) {
@@ -2509,33 +2622,24 @@ func (m *Model) restoreFeedTopAnchor(id string, offset int) {
 	}
 	visible := m.visibleIndices()
 	if len(visible) == 0 {
+		m.startIndex = 0
 		m.scrollLine = 0
 		return
 	}
-	cardWidth, bodyWidth := m.feedCardWidthsForModel()
-	linePos := 0
-	found := false
-	for i, idx := range visible {
+	spans := m.feedVisibleSpans(visible)
+	foundPos := -1
+	for pos := range spans {
+		idx := spans[pos].idx
 		if m.rants[idx].Rant.ID == id {
-			m.scrollLine = linePos + offset
-			found = true
+			foundPos = pos
 			break
 		}
-		linePos += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
-		if i < len(visible)-1 {
-			linePos += 1
-		}
 	}
-	if !found {
+	if foundPos < 0 {
 		return
 	}
-	maxScroll := max(m.feedTotalLines(cardWidth, bodyWidth)-m.feedViewportHeight(), 0)
-	if m.scrollLine > maxScroll {
-		m.scrollLine = maxScroll
-	}
-	if m.scrollLine < 0 {
-		m.scrollLine = 0
-	}
+	m.startIndex = foundPos
+	m.scrollLine = spans[foundPos].top
 }
 
 func (m Model) feedTotalLines(cardWidth, bodyWidth int) int {
