@@ -299,6 +299,24 @@ func TestTrendingDoesNotAutoPaginateAtEnd(t *testing.T) {
 	if updated.loadingMore {
 		t.Fatalf("expected loadingMore=false in trending mode")
 	}
+	if !strings.Contains(strings.ToLower(updated.pagingNotice), "end of trending") {
+		t.Fatalf("expected end-of-trending fun message, got %q", updated.pagingNotice)
+	}
+}
+
+func TestHorizontalScrollKeys_AdjustOffset(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.hScroll = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if updated.hScroll != 0 {
+		t.Fatalf("left should clamp at zero, got %d", updated.hScroll)
+	}
+
+	updated, _ = updated.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if updated.hScroll <= 0 {
+		t.Fatalf("right should increase horizontal scroll, got %d", updated.hScroll)
+	}
 }
 
 func TestTrendingLoaded_DisablesOlderPagination(t *testing.T) {
@@ -357,6 +375,7 @@ func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {
 	m.replies = []domain.Rant{{ID: "id-2", LikesCount: 1, Liked: true}}
 	m.replyAll = []domain.Rant{{ID: "id-2", LikesCount: 1, Liked: true}}
 	m.ancestors = []domain.Rant{{ID: "id-3", LikesCount: 0, Liked: false}}
+	m.profilePosts = []domain.Rant{{ID: "id-5", LikesCount: 2, Liked: false}}
 	focused := domain.Rant{ID: "id-4", LikesCount: 0, Liked: false}
 	m.focusedRant = &focused
 	m.threadCache["root"] = threadData{
@@ -368,6 +387,7 @@ func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {
 	m.applyLikeToggle("id-2")
 	m.applyLikeToggle("id-3")
 	m.applyLikeToggle("id-4")
+	m.applyLikeToggle("id-5")
 	if !m.rants[0].Rant.Liked || m.rants[0].Rant.LikesCount != 1 {
 		t.Fatalf("feed like toggle failed: %#v", m.rants[0].Rant)
 	}
@@ -380,6 +400,9 @@ func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {
 	if !m.focusedRant.Liked || m.focusedRant.LikesCount != 1 {
 		t.Fatalf("focused like toggle failed: %#v", *m.focusedRant)
 	}
+	if !m.profilePosts[0].Liked || m.profilePosts[0].LikesCount != 3 {
+		t.Fatalf("profile post like toggle failed: %#v", m.profilePosts[0])
+	}
 
 	m.toggleLikeInThreadCache("id-2")
 	m.toggleLikeInThreadCache("id-3")
@@ -389,6 +412,29 @@ func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {
 	}
 	if !cached.Ancestors[0].Liked || cached.Ancestors[0].LikesCount != 1 {
 		t.Fatalf("thread cache ancestor toggle failed: %#v", cached.Ancestors[0])
+	}
+}
+
+func TestProfileLikeKey_EmitsLikeForSelectedProfilePost(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.showProfile = true
+	m.profilePosts = []domain.Rant{{ID: "p1", Liked: true, LikesCount: 4}}
+	m.profileCursor = 1
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	if cmd == nil {
+		t.Fatalf("expected like command in profile view")
+	}
+	msg := cmd()
+	like, ok := msg.(LikeRantMsg)
+	if !ok {
+		t.Fatalf("expected LikeRantMsg, got %T", msg)
+	}
+	if like.ID != "p1" || !like.WasLiked {
+		t.Fatalf("unexpected LikeRantMsg: %#v", like)
+	}
+	if !updated.showProfile {
+		t.Fatalf("profile view should remain open after like key")
 	}
 }
 
@@ -563,13 +609,14 @@ func TestPrepareSourceChangeAndDialogFlags(t *testing.T) {
 	m.cursor = 9
 	m.startIndex = 7
 	m.scrollLine = 12
+	m.hScroll = 11
 	m.rants = []RantItem{{Rant: makeRant("x", time.Now(), "acct-a"), Status: StatusNormal}}
 	m.oldestFeedID = "x"
 	m.hasMoreFeed = false
 	m.loading = false
 
 	m.prepareSourceChange()
-	if !m.loading || m.loadingMore || m.cursor != 0 || m.startIndex != 0 || m.scrollLine != 0 || len(m.rants) != 0 || m.oldestFeedID != "" || !m.hasMoreFeed {
+	if !m.loading || m.loadingMore || m.cursor != 0 || m.startIndex != 0 || m.scrollLine != 0 || m.hScroll != 0 || len(m.rants) != 0 || m.oldestFeedID != "" || !m.hasMoreFeed {
 		t.Fatalf("prepareSourceChange did not reset feed state: %#v", m)
 	}
 

@@ -288,6 +288,7 @@ type Model struct {
 	height           int  // Terminal height
 	startIndex       int  // First visible item in the list (for scrolling)
 	scrollLine       int  // Line-based scroll for feed viewport
+	hScroll          int  // Horizontal pan offset (columns)
 	ancestors        []domain.Rant
 	replies          []domain.Rant
 	replyAll         []domain.Rant
@@ -1047,6 +1048,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				}
 				m.ensureProfileCursorVisible()
 				return m, nil
+			case key.Matches(msg, m.keys.Like):
+				if m.profileCursor <= 0 || m.profileCursor > len(m.profilePosts) {
+					return m, nil
+				}
+				selected := m.profilePosts[m.profileCursor-1]
+				return m, func() tea.Msg {
+					return LikeRantMsg{
+						ID:       selected.ID,
+						WasLiked: selected.Liked,
+					}
+				}
 			case key.Matches(msg, m.keys.FollowUser):
 				if strings.TrimSpace(m.profile.ID) == "" || m.profileIsOwn {
 					return m, nil
@@ -1214,6 +1226,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		switch {
+		case msg.String() == "left":
+			if m.hScroll > 0 {
+				m.hScroll = max(m.hScroll-4, 0)
+			}
+			return m, nil
+		case msg.String() == "right":
+			m.hScroll += 4
+			if m.hScroll < 0 {
+				m.hScroll = 0
+			}
+			return m, nil
 		case key.Matches(msg, m.keys.ToggleHints):
 			m.showAllHints = true
 			return m, nil
@@ -1369,6 +1392,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if loadMore != nil {
 				return m, tea.Batch(loadMore, m.ensureMediaPreviewCmd())
 			}
+			if m.feedSource == sourceTrending && !m.hasMoreFeed && m.isAtVisibleFeedEnd() {
+				m.pagingNotice = "🔥 You reached the end of trending. The rantverse rests... for now."
+			}
 			return m, m.ensureMediaPreviewCmd()
 
 		case key.Matches(msg, m.keys.Home):
@@ -1391,6 +1417,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cursor = 0
 			m.startIndex = 0
 			m.scrollLine = 0
+			m.hScroll = 0
 			m.detailCursor = 0
 			m.detailStart = 0
 			m.detailScrollLine = 0
@@ -2813,6 +2840,12 @@ func (m *Model) applyLikeToggle(id string) {
 			break
 		}
 	}
+	for i := range m.profilePosts {
+		if m.profilePosts[i].ID == id {
+			toggle(&m.profilePosts[i].Liked, &m.profilePosts[i].LikesCount)
+			break
+		}
+	}
 	if m.focusedRant != nil && m.focusedRant.ID == id {
 		toggle(&m.focusedRant.Liked, &m.focusedRant.LikesCount)
 	}
@@ -3170,11 +3203,20 @@ func (m Model) nextFeedSource(step int) feedSource {
 	return order[n]
 }
 
+func (m Model) isAtVisibleFeedEnd() bool {
+	visible := m.visibleIndices()
+	if len(visible) == 0 || m.cursor < 0 {
+		return false
+	}
+	return visible[len(visible)-1] == m.cursor
+}
+
 func (m *Model) prepareSourceChange() {
 	m.loadingMore = false
 	m.cursor = 0
 	m.startIndex = 0
 	m.scrollLine = 0
+	m.hScroll = 0
 	m.rants = nil
 	m.oldestFeedID = ""
 	m.hasMoreFeed = true

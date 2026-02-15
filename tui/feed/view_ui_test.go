@@ -130,6 +130,29 @@ func TestRenderBlockedUsersDialog_States(t *testing.T) {
 	}
 }
 
+func TestApplyHorizontalPan_SlicesOverflowedLines(t *testing.T) {
+	in := "0123456789\nshort"
+	out := applyHorizontalPan(in, 3, 5)
+	lines := strings.Split(out, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if lines[0] != "34567" {
+		t.Fatalf("unexpected panned first line: %q", lines[0])
+	}
+	if lines[1] != "rt" {
+		t.Fatalf("unexpected second line: %q", lines[1])
+	}
+}
+
+func TestApplyHorizontalPan_NoOverflowNoChange(t *testing.T) {
+	in := "short\ntiny"
+	out := applyHorizontalPan(in, 5, 20)
+	if out != in {
+		t.Fatalf("expected no change when content does not overflow; got %q", out)
+	}
+}
+
 func appProfile(id, username string) app.Profile {
 	return app.Profile{ID: id, Username: username, DisplayName: username}
 }

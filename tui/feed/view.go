@@ -8,21 +8,26 @@ import (
 	"terminalrant/tui/common"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // View renders the feed as a string.
 func (m Model) View() string {
+	var out string
 	if m.showBlocked {
-		return m.withKeyDialog(m.renderBlockedView())
+		out = m.withKeyDialog(m.renderBlockedView())
+		return applyHorizontalPan(out, m.hScroll, m.width)
 	}
 
 	if m.showProfile {
-		return m.withKeyDialog(m.renderProfileView())
+		out = m.withKeyDialog(m.renderProfileView())
+		return applyHorizontalPan(out, m.hScroll, m.width)
 	}
 
 	// If in detail view, render it exclusively (or as an overlay)
 	if m.showDetail {
-		return m.withKeyDialog(m.renderDetailView())
+		out = m.withKeyDialog(m.renderDetailView())
+		return applyHorizontalPan(out, m.hScroll, m.width)
 	}
 
 	var b strings.Builder
@@ -34,7 +39,32 @@ func (m Model) View() string {
 		b.WriteString(m.renderHashtagInputBar() + "\n")
 	}
 	b.WriteString(m.helpView())
-	return m.withKeyDialog(b.String())
+	out = m.withKeyDialog(b.String())
+	return applyHorizontalPan(out, m.hScroll, m.width)
+}
+
+func applyHorizontalPan(content string, offset, width int) string {
+	if width <= 0 || offset <= 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	maxOverflow := 0
+	for _, ln := range lines {
+		w := ansi.StringWidth(ln)
+		if w > width && w-width > maxOverflow {
+			maxOverflow = w - width
+		}
+	}
+	if maxOverflow <= 0 {
+		return content
+	}
+	if offset > maxOverflow {
+		offset = maxOverflow
+	}
+	for i, ln := range lines {
+		lines[i] = ansi.Cut(ln, offset, offset+width)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) withKeyDialog(base string) string {
