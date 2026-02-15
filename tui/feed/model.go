@@ -505,7 +505,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 		switch m.feedSource {
 		case sourceTrending:
-			m.hasMoreFeed = len(msg.Rants) > 0
+			m.hasMoreFeed = false
+			m.oldestFeedID = ""
 		case sourceFollowing:
 			raw := msg.RawCount
 			if raw == 0 {
@@ -577,7 +578,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.oldestFeedID = m.lastFeedID()
 		switch m.feedSource {
 		case sourceTrending:
-			m.hasMoreFeed = added > 0
+			m.hasMoreFeed = false
+			m.oldestFeedID = ""
 		case sourceFollowing:
 			raw := msg.RawCount
 			if raw == 0 {
@@ -1243,22 +1245,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.pagingNotice = "Exit detail view to switch tabs."
 				return m, nil
 			}
-			if m.hasCustomTab() {
-				m.feedSource = (m.feedSource + 1) % 4
-			} else {
-				m.feedSource = (m.feedSource + 1) % 3
-			}
+			m.feedSource = m.nextFeedSource(1)
 			m.prepareSourceChange()
-			switch m.feedSource {
-			case sourceTerminalRant:
-				m.pagingNotice = "Feed: " + domain.AppHashTag
-			case sourceTrending:
-				m.pagingNotice = "Feed: trending"
-			case sourceFollowing:
-				m.pagingNotice = "Feed: following"
-			case sourceCustomHashtag:
-				m.pagingNotice = "Feed: #" + m.hashtag
-			}
+			m.pagingNotice = "Feed: " + m.sourceLabel()
 			m.feedReqSeq++
 			return m, tea.Batch(m.fetchRants(m.feedReqSeq), m.emitPrefsChanged())
 
@@ -1267,22 +1256,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.pagingNotice = "Exit detail view to switch tabs."
 				return m, nil
 			}
-			if m.hasCustomTab() {
-				m.feedSource = (m.feedSource + 3) % 4
-			} else {
-				m.feedSource = (m.feedSource + 2) % 3
-			}
+			m.feedSource = m.nextFeedSource(-1)
 			m.prepareSourceChange()
-			switch m.feedSource {
-			case sourceTerminalRant:
-				m.pagingNotice = "Feed: " + domain.AppHashTag
-			case sourceTrending:
-				m.pagingNotice = "Feed: trending"
-			case sourceFollowing:
-				m.pagingNotice = "Feed: following"
-			case sourceCustomHashtag:
-				m.pagingNotice = "Feed: #" + m.hashtag
-			}
+			m.pagingNotice = "Feed: " + m.sourceLabel()
 			m.feedReqSeq++
 			return m, tea.Batch(m.fetchRants(m.feedReqSeq), m.emitPrefsChanged())
 
@@ -2493,6 +2469,9 @@ func (m *Model) maybeStartFeedPrefetch() tea.Cmd {
 	if m.loading || m.loadingMore || len(m.rants) == 0 {
 		return nil
 	}
+	if m.feedSource == sourceTrending {
+		return nil
+	}
 	if !m.hasMoreFeed || m.oldestFeedID == "" {
 		return nil
 	}
@@ -3162,6 +3141,33 @@ func (m Model) emitPrefsChanged() tea.Cmd {
 
 func (m Model) hasCustomTab() bool {
 	return !strings.EqualFold(strings.TrimSpace(m.hashtag), strings.TrimSpace(m.defaultHashtag))
+}
+
+func (m Model) tabOrder() []feedSource {
+	order := []feedSource{sourceTerminalRant, sourceTrending, sourceFollowing}
+	if m.hasCustomTab() {
+		order = append(order, sourceCustomHashtag)
+	}
+	return order
+}
+
+func (m Model) nextFeedSource(step int) feedSource {
+	order := m.tabOrder()
+	if len(order) == 0 {
+		return sourceTerminalRant
+	}
+	cur := 0
+	for i, src := range order {
+		if src == m.feedSource {
+			cur = i
+			break
+		}
+	}
+	n := (cur + step) % len(order)
+	if n < 0 {
+		n += len(order)
+	}
+	return order[n]
 }
 
 func (m *Model) prepareSourceChange() {

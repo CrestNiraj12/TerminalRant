@@ -277,6 +277,79 @@ func TestNoLoadMoreWhileInitialFeedLoading(t *testing.T) {
 	}
 }
 
+func TestTrendingDoesNotAutoPaginateAtEnd(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "trending")
+	m.width = 120
+	m.height = 40
+	m.feedSource = sourceTrending
+	m.loading = false
+	m.loadingMore = false
+	m.hasMoreFeed = false
+	m.oldestFeedID = "id-2"
+	m.rants = []RantItem{
+		{Rant: makeRant("id-1", time.Now(), "acct-a"), Status: StatusNormal},
+		{Rant: makeRant("id-2", time.Now(), "acct-b"), Status: StatusNormal},
+	}
+	m.cursor = len(m.rants) - 1
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if cmd != nil {
+		t.Fatalf("expected no pagination command in trending mode")
+	}
+	if updated.loadingMore {
+		t.Fatalf("expected loadingMore=false in trending mode")
+	}
+}
+
+func TestTrendingLoaded_DisablesOlderPagination(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "trending")
+	m.feedSource = sourceTrending
+	m.loading = true
+	m.hasMoreFeed = true
+	m.oldestFeedID = "seed"
+
+	rants := []domain.Rant{
+		makeRant("id-1", time.Now(), "acct-a"),
+		makeRant("id-2", time.Now().Add(-time.Minute), "acct-b"),
+	}
+	updated, _ := m.Update(RantsLoadedMsg{
+		Rants:    rants,
+		QueryKey: m.currentFeedQueryKey(),
+		RawCount: len(rants),
+		ReqSeq:   m.feedReqSeq,
+	})
+
+	if updated.hasMoreFeed {
+		t.Fatalf("trending should be snapshot-only; hasMoreFeed must be false")
+	}
+	if updated.oldestFeedID != "" {
+		t.Fatalf("trending should not keep oldestFeedID, got %q", updated.oldestFeedID)
+	}
+}
+
+func TestNextFeedSource_OrderIncludesCustomLast(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.defaultHashtag = "terminalrant"
+	m.hashtag = "golang"
+
+	m.feedSource = sourceTerminalRant
+	if got := m.nextFeedSource(1); got != sourceTrending {
+		t.Fatalf("next from terminalrant: got %v", got)
+	}
+	m.feedSource = sourceTrending
+	if got := m.nextFeedSource(1); got != sourceFollowing {
+		t.Fatalf("next from trending: got %v", got)
+	}
+	m.feedSource = sourceFollowing
+	if got := m.nextFeedSource(1); got != sourceCustomHashtag {
+		t.Fatalf("next from following: got %v", got)
+	}
+	m.feedSource = sourceCustomHashtag
+	if got := m.nextFeedSource(1); got != sourceTerminalRant {
+		t.Fatalf("next from custom: got %v", got)
+	}
+}
+
 func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {
 	now := time.Now()
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
