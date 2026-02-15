@@ -326,6 +326,7 @@ type Model struct {
 	hashtagBuffer    string
 	detailStart      int
 	showProfile      bool
+	returnToProfile  bool
 	profileIsOwn     bool
 	profileLoading   bool
 	profileErr       error
@@ -663,6 +664,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.confirmUnblock = false
 			m.unblockTarget = app.BlockedUser{}
 			m.showProfile = false
+			m.returnToProfile = false
 			m.profileIsOwn = false
 			m.profileLoading = false
 			m.profileErr = nil
@@ -692,6 +694,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.loadingReplies = false
 		m.focusedRant = nil
 		m.viewStack = nil
+		m.returnToProfile = false
 		return m, m.ensureMediaPreviewCmd()
 
 	case ThreadLoadedMsg:
@@ -1004,6 +1007,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			case msg.String() == "H":
 				// H: go to feed home.
 				m.showProfile = false
+				m.returnToProfile = false
 				m.profileIsOwn = false
 				m.profileLoading = false
 				m.profileErr = nil
@@ -1024,6 +1028,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, nil
 			case msg.String() == "esc" || msg.String() == "q":
 				m.showProfile = false
+				m.returnToProfile = false
 				m.profileIsOwn = false
 				m.profileLoading = false
 				m.profileErr = nil
@@ -1095,6 +1100,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				if m.profileCursor > 0 && m.profileCursor <= len(m.profilePosts) {
 					target := m.profilePosts[m.profileCursor-1]
 					m.showProfile = false
+					m.returnToProfile = true
 					m.profileIsOwn = false
 					m.setCursorByID(target.ID)
 					m.showDetail = true
@@ -1405,6 +1411,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.showDetail = false
 			m.showProfile = false
+			m.returnToProfile = false
 			m.profileIsOwn = false
 			m.confirmDelete = false
 			m.confirmBlock = false
@@ -1430,6 +1437,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			if len(m.rants) > 0 {
 				if !m.showDetail {
 					m.showDetail = true
+					m.returnToProfile = false
 					m.detailCursor = 0
 					m.detailStart = 0
 					m.detailScrollLine = 0
@@ -1651,6 +1659,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 					m.ancestors = nil
 					m.loadingReplies = true
 					return m, m.loadThreadFromCacheOrFetch(id)
+				}
+				if m.returnToProfile {
+					m.showDetail = false
+					m.showProfile = true
+					m.returnToProfile = false
+					m.focusedRant = nil
+					m.viewStack = nil
+					m.detailStart = 0
+					m.detailScrollLine = 0
+					return m, nil
 				}
 				m.showDetail = false
 				m.focusedRant = nil
@@ -3217,6 +3235,7 @@ func (m *Model) prepareSourceChange() {
 	m.startIndex = 0
 	m.scrollLine = 0
 	m.hScroll = 0
+	m.returnToProfile = false
 	m.rants = nil
 	m.oldestFeedID = ""
 	m.hasMoreFeed = true

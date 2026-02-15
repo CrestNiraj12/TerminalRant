@@ -163,6 +163,30 @@ func TestProfileEnter_OpensExactSelectedProfilePost(t *testing.T) {
 	if updated.focusedRant == nil || updated.focusedRant.ID != "profile-id" {
 		t.Fatalf("expected focused rant profile-id, got %+v", updated.focusedRant)
 	}
+	if !updated.returnToProfile {
+		t.Fatalf("expected returnToProfile=true when opening detail from profile")
+	}
+}
+
+func TestDetailBackFromProfile_ReturnsToProfile(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.showProfile = true
+	m.profileIsOwn = true
+	m.profile = appProfile("42", "u42")
+	m.profilePosts = []domain.Rant{makeRant("profile-id", time.Now(), "acct-x")}
+	m.profileCursor = 1
+	m.rants = []RantItem{{Rant: makeRant("feed-id", time.Now(), "acct-y"), Status: StatusNormal}}
+	m.cursor = 0
+
+	opened, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !opened.showDetail || !opened.returnToProfile {
+		t.Fatalf("expected detail opened from profile")
+	}
+
+	closed, _ := opened.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if !closed.showProfile || closed.showDetail {
+		t.Fatalf("expected q from detail to return to profile; showProfile=%v showDetail=%v", closed.showProfile, closed.showDetail)
+	}
 }
 
 func TestDownNearPrefetchTrigger_StartsLoadingOlderPosts(t *testing.T) {
