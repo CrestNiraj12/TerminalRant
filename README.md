@@ -278,4 +278,4 @@ go test -tags=smoke ./...
 
 ## License
 
-TBD
+MIT
