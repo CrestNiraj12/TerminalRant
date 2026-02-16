@@ -1,9 +1,30 @@
 # TerminalRant
 
-Ranting space for developers that live in the terminal.
+Mastodon for people who live in the terminal.
 
-TerminalRant is a terminal UI (TUI) client for Mastodon. It lets you read,
-post, reply, edit, and moderate your feed without leaving the terminal.
+TerminalRant is a terminal UI (TUI) client for Mastodon. Read, post, reply,
+moderate, and browse your timelines without leaving your shell.
+
+## Quick Start (60 seconds)
+
+Install:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+```
+
+Run:
+
+```sh
+terminalrant
+```
+
+On first run, TerminalRant opens your browser for OAuth login and stores auth
+state in `~/.config/terminalrant` by default.
+
+## Screenshot
+
+![TerminalRant feed view](screenshots/terminalrant-feed.png)
 
 ## Features
 
@@ -56,35 +77,40 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 
 ## Requirements
 
-- Go 1.25+
 - A Mastodon account
 - Browser access for OAuth login
 
 ## Install
 
-This installer is currently pinned to `v0.2.0`.
+The installer is pinned to `v0.2.0` and verifies downloaded binaries with
+`checksums.txt` before installing.
+
+Install to default directory:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
 ```
 
-Install in a custom directory (Optional):
+Install to a custom directory:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | INSTALL_DIR="$HOME/.local/bin" bash
 ```
 
-If `terminalrant` is not found after install, add your install directory to `PATH`.
-
-zsh example:
+If `terminalrant` is not found after install, add your install directory to `PATH`:
 
 ```sh
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
+```
+
+Verify:
+
+```sh
 terminalrant --version
 ```
 
-Or build/install with Go:
+Build from source (Go 1.25+):
 
 ```sh
 go install ./...
@@ -119,13 +145,19 @@ CLI flags:
 Start the app:
 
 ```sh
-TERMINALRANT_INSTANCE="https://your.instance" \
-TERMINALRANT_HASHTAG="terminalrant" \
-go run .
+TERMINALRANT_INSTANCE="https://your.instance" terminalrant
 ```
 
 On first run, TerminalRant opens a browser window for OAuth and stores auth
 state under `TERMINALRANT_AUTH_DIR`.
+
+If you prefer running from source:
+
+```sh
+TERMINALRANT_INSTANCE="https://your.instance" \
+TERMINALRANT_HASHTAG="terminalrant" \
+go run .
+```
 
 ### Key bindings
 
@@ -187,6 +219,16 @@ Dialogs:
 - `#terminalrant` is always auto-appended on post/edit/reply if missing.
 - For display, HTML returned from Mastodon is stripped for terminal rendering.
 - UI state is stored in `ui_state.json` under `TERMINALRANT_AUTH_DIR`.
+
+## Troubleshooting
+
+- `terminalrant: command not found`
+  - Add install dir to PATH (`~/.local/bin` by default) and reload shell.
+- OAuth callback timeout
+  - Ensure your browser can access `http://127.0.0.1:<port>/callback`.
+  - Optionally set `TERMINALRANT_OAUTH_CALLBACK_PORT` to a free local port.
+- Wrong server
+  - Set `TERMINALRANT_INSTANCE="https://your.instance"` before launching.
 
 ## Development
 
