@@ -14,7 +14,18 @@ import (
 	"terminalrant/tui"
 )
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Printf("TerminalRant %s\ncommit: %s\nbuilt: %s\n", version, commit, date)
+		return
+	}
+
 	// 1. Load config from environment.
 	cfg, err := config.Load()
 	if err != nil {
