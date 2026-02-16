@@ -5,6 +5,7 @@ REPO_OWNER="CrestNiraj12"
 REPO_NAME="terminalrant"
 BINARY_NAME="terminalrant"
 PINNED_VERSION="0.1.0"
+TMP_DIR=""
 
 DEFAULT_INSTALL_DIR="/usr/local/bin"
 if [ -n "${INSTALL_DIR:-}" ]; then
@@ -31,6 +32,12 @@ fail() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+}
+
+cleanup() {
+  if [ -n "${TMP_DIR}" ] && [ -d "${TMP_DIR}" ]; then
+    rm -rf "${TMP_DIR}"
+  fi
 }
 
 resolve_os() {
@@ -72,7 +79,7 @@ main() {
   need_cmd curl
   need_cmd mktemp
 
-  local os arch version ext archive_name download_url tmp_dir
+  local os arch version ext archive_name download_url
   os="$(resolve_os)"
   arch="$(resolve_arch)"
 
@@ -93,24 +100,24 @@ main() {
   log "install version: v${version}"
   log "download: ${download_url}"
 
-  tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir:-}"' EXIT
+  TMP_DIR="$(mktemp -d)"
+  trap cleanup EXIT
 
-  curl -fL "${download_url}" -o "${tmp_dir}/${archive_name}" || fail "download failed"
+  curl -fL "${download_url}" -o "${TMP_DIR}/${archive_name}" || fail "download failed"
 
   if [ "${ext}" = "zip" ]; then
-    unzip -q "${tmp_dir}/${archive_name}" -d "${tmp_dir}"
+    unzip -q "${TMP_DIR}/${archive_name}" -d "${TMP_DIR}"
   else
-    tar -xzf "${tmp_dir}/${archive_name}" -C "${tmp_dir}"
+    tar -xzf "${TMP_DIR}/${archive_name}" -C "${TMP_DIR}"
   fi
 
-  [ -f "${tmp_dir}/${BINARY_NAME}" ] || fail "binary not found in archive"
+  [ -f "${TMP_DIR}/${BINARY_NAME}" ] || fail "binary not found in archive"
 
   mkdir -p "${INSTALL_DIR}" || fail "unable to create install dir: ${INSTALL_DIR}"
   if command -v install >/dev/null 2>&1; then
-    install -m 0755 "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" || fail "install failed"
+    install -m 0755 "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" || fail "install failed"
   else
-    cp "${tmp_dir}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" || fail "copy failed"
+    cp "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}" || fail "copy failed"
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}" || fail "chmod failed"
   fi
 
