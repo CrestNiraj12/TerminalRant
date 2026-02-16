@@ -62,6 +62,24 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 
 ## Install
 
+Install latest release with `curl`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+```
+
+Optional:
+
+```sh
+# Install a specific version (tag without leading v)
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | VERSION=0.1.0 bash
+
+# Install to a custom directory
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+Or build/install with Go:
+
 ```sh
 go install ./...
 ```
