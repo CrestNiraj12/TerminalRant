@@ -19,8 +19,8 @@ func TestParseCLIArgs(t *testing.T) {
 		{name: "help short", args: []string{"-h"}, mode: cliHelp},
 		{name: "help word", args: []string{"help"}, mode: cliHelp},
 		{name: "invalid flag", args: []string{"--bogus"}, mode: cliInvalid, msg: "unexpected argument: --bogus"},
-		{name: "invalid flag", args: []string{"--bogus", "--pogus"}, mode: cliInvalid, msg: "unexpected argument: --bogus --pogus"},
-		{name: "too many args", args: []string{"--version", "extra"}, mode: cliVersion},
+		{name: "invalid flags", args: []string{"--bogus", "--pogus"}, mode: cliInvalid, msg: "unexpected argument: --bogus --pogus"},
+		{name: "valid with invalid after", args: []string{"--version", "extra"}, mode: cliVersion},
 	}
 
 	for _, tc := range tests {
