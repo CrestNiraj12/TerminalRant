@@ -1,6 +1,6 @@
 # TerminalRant
 
-Mastodon for people who live in the terminal.
+Ranting space for people who live in the terminal.
 
 TerminalRant is a terminal UI (TUI) client for Mastodon. Read, post, reply,
 moderate, and browse your timelines without leaving your shell.
