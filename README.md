@@ -62,19 +62,57 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 
 ## Install
 
-Install with `curl`:
+This installer is currently pinned to `v0.1.0`.
+
+macOS (zsh):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
 ```
 
-This installer is currently pinned to `v0.1.0`.
+Linux:
 
-Optional:
+```sh
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+```
+
+Windows:
+
+- Git Bash / MSYS2 / Cygwin:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+```
+
+- WSL (Ubuntu/Debian/etc.):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+```
+
+Optional (macOS/Linux/Git Bash/WSL):
 
 ```sh
 # Install to a custom directory
 curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+If `terminalrant` is not found after install, add your install directory to `PATH`.
+
+zsh example:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+terminalrant --version
+```
+
+bash example:
+
+```sh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+terminalrant --version
 ```
 
 Or build/install with Go:
