@@ -42,6 +42,12 @@ checksum:
   name_template: "checksums.txt"
 
 release:
+  header: |
+    {{- if .Env.TAG_MESSAGE }}
+    {{ .Env.TAG_MESSAGE }}
+
+    ---
+    {{- end }}
   github:
     owner: CrestNiraj12
     name: terminalrant

@@ -20,6 +20,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Read tag description
+        run: |
+          tag_message="$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')"
+          {
+            echo "TAG_MESSAGE<<EOF"
+            echo "${tag_message}"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
