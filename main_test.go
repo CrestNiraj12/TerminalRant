@@ -1,6 +1,8 @@
 package main
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestParseCLIArgs(t *testing.T) {
 	tests := []struct {
@@ -16,8 +18,9 @@ func TestParseCLIArgs(t *testing.T) {
 		{name: "help long", args: []string{"--help"}, mode: cliHelp},
 		{name: "help short", args: []string{"-h"}, mode: cliHelp},
 		{name: "help word", args: []string{"help"}, mode: cliHelp},
-		{name: "invalid flag", args: []string{"--bogus"}, mode: cliInvalid, msg: "unrecognized argument: --bogus"},
-		{name: "too many args", args: []string{"--version", "extra"}, mode: cliInvalid, msg: "unexpected arguments: --version extra"},
+		{name: "invalid flag", args: []string{"--bogus"}, mode: cliInvalid, msg: "unexpected argument: --bogus"},
+		{name: "invalid flag", args: []string{"--bogus", "--pogus"}, mode: cliInvalid, msg: "unexpected argument: --bogus --pogus"},
+		{name: "too many args", args: []string{"--version", "extra"}, mode: cliVersion},
 	}
 
 	for _, tc := range tests {
