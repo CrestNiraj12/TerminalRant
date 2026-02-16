@@ -94,7 +94,7 @@ main() {
   log "download: ${download_url}"
 
   tmp_dir="$(mktemp -d)"
-  trap 'rm -rf "${tmp_dir}"' EXIT
+  trap 'rm -rf "${tmp_dir:-}"' EXIT
 
   curl -fL "${download_url}" -o "${tmp_dir}/${archive_name}" || fail "download failed"
 
