@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -20,10 +21,45 @@ var (
 	date    = "unknown"
 )
 
+type cliMode int
+
+const (
+	cliRun cliMode = iota
+	cliVersion
+	cliHelp
+	cliInvalid
+)
+
+func parseCLIArgs(args []string) (cliMode, string) {
+	if len(args) == 0 {
+		return cliRun, ""
+	}
+
+	switch args[0] {
+	case "--version", "-version", "-v":
+		return cliVersion, ""
+	case "--help", "-h", "help":
+		return cliHelp, ""
+	default:
+		return cliInvalid, fmt.Sprintf("unexpected argument: %s", strings.Join(args, " "))
+	}
+}
+
+func usage() string {
+	return "Usage: terminalrant [--version|-version|-v] [--help|-h]"
+}
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--version" {
+	mode, msg := parseCLIArgs(os.Args[1:])
+	switch mode {
+	case cliVersion:
 		fmt.Printf("TerminalRant %s\ncommit: %s\nbuilt: %s\n", version, commit, date)
 		return
+	case cliHelp:
+		fmt.Println(usage())
+		return
+	case cliInvalid:
+		fmt.Fprintf(os.Stderr, "%s\n%s\n", msg, usage())
 	}
 
 	// 1. Load config from environment.
