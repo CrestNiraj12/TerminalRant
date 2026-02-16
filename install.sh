@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_OWNER="CrestNiraj12"
 REPO_NAME="terminalrant"
 BINARY_NAME="terminalrant"
+PINNED_VERSION="0.1.0"
 
 DEFAULT_INSTALL_DIR="/usr/local/bin"
 if [ -n "${INSTALL_DIR:-}" ]; then
@@ -13,7 +14,11 @@ elif [ -w "${DEFAULT_INSTALL_DIR}" ]; then
 else
   INSTALL_DIR="${HOME}/.local/bin"
 fi
-VERSION="${VERSION:-latest}"
+if [ -n "${VERSION:-}" ] && [ "${VERSION#v}" != "${PINNED_VERSION}" ]; then
+  printf '[install] error: this installer is pinned to v%s; requested VERSION=%s\n' "${PINNED_VERSION}" "${VERSION}" >&2
+  exit 1
+fi
+VERSION="${PINNED_VERSION}"
 
 log() {
   printf '[install] %s\n' "$*"
@@ -63,20 +68,6 @@ resolve_arch() {
   esac
 }
 
-resolve_version() {
-  if [ "${VERSION}" != "latest" ]; then
-    printf '%s' "${VERSION#v}"
-    return 0
-  fi
-
-  local api_url tag
-  api_url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
-  tag="$(curl -fsSL "${api_url}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p' | head -n1)"
-
-  [ -n "${tag}" ] || fail "unable to resolve latest version from GitHub"
-  printf '%s' "${tag}"
-}
-
 main() {
   need_cmd curl
   need_cmd mktemp
@@ -94,7 +85,7 @@ main() {
     need_cmd tar
   fi
 
-  version="$(resolve_version)"
+  version="${VERSION#v}"
   archive_name="${BINARY_NAME}_${version}_${os}_${arch}.${ext}"
   download_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${version}/${archive_name}"
 
