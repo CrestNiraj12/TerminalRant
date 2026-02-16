@@ -87,6 +87,11 @@ TerminalRant is configured via environment variables:
 
 ## Usage
 
+CLI flags:
+
+- `--version`, `-v`, `-version` — print build/version info
+- `--help`, `-h` — show usage
+
 Start the app:
 
 ```sh
