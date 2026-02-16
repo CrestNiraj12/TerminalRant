@@ -686,3 +686,27 @@ func TestOrganizeThreadReplies_NestsAndAppendsOrphans(t *testing.T) {
 		t.Fatalf("expected threaded order first, got %#v", out)
 	}
 }
+
+func TestIsSafeExternalURL(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "https", in: "https://example.com/post/1", want: true},
+		{name: "http", in: "http://example.com/post/1", want: true},
+		{name: "javascript", in: "javascript:alert(1)", want: false},
+		{name: "file", in: "file:///etc/passwd", want: false},
+		{name: "mailto", in: "mailto:a@example.com", want: false},
+		{name: "relative", in: "/local/path", want: false},
+		{name: "invalid", in: "://bad", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSafeExternalURL(tc.in); got != tc.want {
+				t.Fatalf("isSafeExternalURL(%q) got %v want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}

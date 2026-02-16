@@ -391,11 +391,12 @@ func (m Model) Refresh() tea.Cmd {
 	return m.fetchRants(m.feedReqSeq)
 }
 
-func openURL(url string) tea.Cmd {
+func openURL(rawURL string) tea.Cmd {
 	return func() tea.Msg {
-		// Use 'open' for Mac. For Linux 'xdg-open', Windows 'rundll32'.
-		// Since user is on Mac, 'open' is safe.
-		_ = exec.Command("open", url).Start()
+		if !isSafeExternalURL(rawURL) {
+			return nil
+		}
+		_ = exec.Command("open", rawURL).Start()
 		return nil
 	}
 }
@@ -406,6 +407,9 @@ func openURLs(urls []string) tea.Cmd {
 	for _, u := range urls {
 		u = strings.TrimSpace(u)
 		if u == "" {
+			continue
+		}
+		if !isSafeExternalURL(u) {
 			continue
 		}
 		if _, ok := seen[u]; ok {
@@ -422,6 +426,22 @@ func openURLs(urls []string) tea.Cmd {
 			_ = exec.Command("open", u).Start()
 		}
 		return nil
+	}
+}
+
+func isSafeExternalURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if parsed.Host == "" {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2419,10 +2439,7 @@ func (m *Model) ensureFeedCursorVisible() {
 	if selectedPos < m.startIndex {
 		m.startIndex = selectedPos
 	} else {
-		slots := m.feedVisibleSlotsFrom(spans, m.startIndex, viewHeight)
-		if slots < 1 {
-			slots = 1
-		}
+		slots := max(m.feedVisibleSlotsFrom(spans, m.startIndex, viewHeight), 1)
 		last := m.startIndex + slots - 1
 		if selectedPos > last {
 			m.startIndex += selectedPos - last
@@ -2435,14 +2452,7 @@ func (m *Model) ensureFeedCursorVisible() {
 		m.startIndex = len(spans) - 1
 	}
 
-	m.scrollLine = spans[m.startIndex].top
-
-	if m.scrollLine > maxScroll {
-		m.scrollLine = maxScroll
-	}
-	if m.scrollLine < 0 {
-		m.scrollLine = 0
-	}
+	m.scrollLine = min(maxScroll, spans[m.startIndex].top)
 }
 
 func (m Model) feedStartPosFromScrollLine(spans []feedItemSpan, scrollLine int) int {

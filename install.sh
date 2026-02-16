@@ -34,6 +34,23 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+sha256_file() {
+  local file="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${file}" | awk '{print $1}'
+    return 0
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${file}" | awk '{print $1}'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "${file}" | awk '{print $2}'
+    return 0
+  fi
+  fail "no SHA-256 tool found (need shasum, sha256sum, or openssl)"
+}
+
 cleanup() {
   if [ -n "${TMP_DIR}" ] && [ -d "${TMP_DIR}" ]; then
     rm -rf "${TMP_DIR}"
@@ -86,7 +103,7 @@ main() {
   need_cmd curl
   need_cmd mktemp
 
-  local os arch version ext archive_name download_url
+  local os arch version ext archive_name download_url checksums_url checksums_file expected_sha actual_sha
   os="$(resolve_os)"
   arch="$(resolve_arch)"
 
@@ -102,6 +119,7 @@ main() {
   version="${VERSION#v}"
   archive_name="${BINARY_NAME}_${version}_${os}_${arch}.${ext}"
   download_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${version}/${archive_name}"
+  checksums_url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/v${version}/checksums.txt"
 
   log "detected target: ${os}/${arch}"
   log "install version: v${version}"
@@ -111,6 +129,14 @@ main() {
   trap cleanup EXIT
 
   curl -fL "${download_url}" -o "${TMP_DIR}/${archive_name}" || fail "download failed"
+  checksums_file="${TMP_DIR}/checksums.txt"
+  curl -fL "${checksums_url}" -o "${checksums_file}" || fail "failed to download checksums.txt"
+
+  expected_sha="$(awk -v f="${archive_name}" '$2 == f {print $1}' "${checksums_file}" | head -n1)"
+  [ -n "${expected_sha}" ] || fail "checksum entry missing for ${archive_name}"
+  actual_sha="$(sha256_file "${TMP_DIR}/${archive_name}")"
+  [ "${actual_sha}" = "${expected_sha}" ] || fail "checksum mismatch for ${archive_name}"
+  log "checksum verified"
 
   if [ "${ext}" = "zip" ]; then
     unzip -q "${TMP_DIR}/${archive_name}" -d "${TMP_DIR}"

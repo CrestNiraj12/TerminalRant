@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -153,5 +154,25 @@ func TestStateAndTokenHelpers(t *testing.T) {
 	}
 	if got != "my-token" {
 		t.Fatalf("unexpected read token: %q", got)
+	}
+}
+
+func TestPKCEHelpers(t *testing.T) {
+	verifier, err := randomCodeVerifier()
+	if err != nil {
+		t.Fatalf("randomCodeVerifier failed: %v", err)
+	}
+	if len(verifier) < 43 || len(verifier) > 128 {
+		t.Fatalf("invalid code verifier length: %d", len(verifier))
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(verifier); err != nil {
+		t.Fatalf("verifier is not base64url: %v", err)
+	}
+
+	// RFC 7636 Appendix B example.
+	challenge := codeChallengeS256("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+	want := "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+	if challenge != want {
+		t.Fatalf("unexpected code challenge: got %q want %q", challenge, want)
 	}
 }

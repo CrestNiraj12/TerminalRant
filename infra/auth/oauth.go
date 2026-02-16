@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -139,6 +140,11 @@ func runOAuthAuthorization(ctx context.Context, instanceURL string, creds oauthC
 	if err != nil {
 		return "", fmt.Errorf("generating oauth state: %w", err)
 	}
+	codeVerifier, err := randomCodeVerifier()
+	if err != nil {
+		return "", fmt.Errorf("generating oauth code verifier: %w", err)
+	}
+	codeChallenge := codeChallengeS256(codeVerifier)
 	redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", callbackPort)
 
 	codeCh := make(chan string, 1)
@@ -191,11 +197,13 @@ func runOAuthAuthorization(ctx context.Context, instanceURL string, creds oauthC
 	}()
 
 	authURL := instanceURL + "/oauth/authorize?" + url.Values{
-		"response_type": {"code"},
-		"client_id":     {creds.ClientID},
-		"redirect_uri":  {redirectURI},
-		"scope":         {"read write"},
-		"state":         {state},
+		"response_type":         {"code"},
+		"client_id":             {creds.ClientID},
+		"redirect_uri":          {redirectURI},
+		"scope":                 {"read write"},
+		"state":                 {state},
+		"code_challenge_method": {"S256"},
+		"code_challenge":        {codeChallenge},
 	}.Encode()
 
 	fmt.Printf("Opening browser for OAuth login...\nIf it does not open, visit:\n%s\n\n", authURL)
@@ -226,6 +234,7 @@ func runOAuthAuthorization(ctx context.Context, instanceURL string, creds oauthC
 	form.Set("client_secret", creds.ClientSecret)
 	form.Set("redirect_uri", redirectURI)
 	form.Set("scope", "read write")
+	form.Set("code_verifier", codeVerifier)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, instanceURL+"/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
@@ -258,11 +267,25 @@ func runOAuthAuthorization(ctx context.Context, instanceURL string, creds oauthC
 }
 
 func randomState() (string, error) {
-	b := make([]byte, 24)
+	return randomToken(24)
+}
+
+func randomCodeVerifier() (string, error) {
+	// 32 random bytes -> 43 chars with RawURLEncoding, valid PKCE verifier length.
+	return randomToken(32)
+}
+
+func randomToken(n int) (string, error) {
+	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func codeChallengeS256(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func readToken(path string) (string, error) {
