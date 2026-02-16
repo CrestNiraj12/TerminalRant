@@ -2,19 +2,29 @@ name: smoke
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * *'
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    if: ${{ secrets.TERMINALRANT_BASE_URL != '' && secrets.TERMINALRANT_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Check smoke secrets
+        id: smoke_secrets
+        env:
+          TERMINALRANT_BASE_URL: ${{ secrets.TERMINALRANT_BASE_URL }}
+          TERMINALRANT_TOKEN: ${{ secrets.TERMINALRANT_TOKEN }}
+        run: |
+          if [ -n "$TERMINALRANT_BASE_URL" ] && [ -n "$TERMINALRANT_TOKEN" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "Smoke secrets are not configured; skipping smoke tests."
+          fi
       - name: Smoke tests (non-mutating)
+        if: ${{ steps.smoke_secrets.outputs.has_secrets == 'true' }}
         env:
           TERMINALRANT_BASE_URL: ${{ secrets.TERMINALRANT_BASE_URL }}
           TERMINALRANT_TOKEN: ${{ secrets.TERMINALRANT_TOKEN }}
