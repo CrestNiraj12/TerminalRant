@@ -40,6 +40,13 @@ cleanup() {
   fi
 }
 
+is_in_path() {
+  case ":${PATH}:" in
+    *":$1:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_os() {
   local uname_s
   uname_s="$(uname -s)"
@@ -122,7 +129,19 @@ main() {
   fi
 
   log "installed ${BINARY_NAME} to ${INSTALL_DIR}/${BINARY_NAME}"
-  log "run '${BINARY_NAME} --version' to verify"
+  if is_in_path "${INSTALL_DIR}"; then
+    log "run '${BINARY_NAME} --version' to verify"
+  else
+    log "installed directory is not on PATH: ${INSTALL_DIR}"
+    if [ -n "${ZSH_VERSION:-}" ]; then
+      log "add it with: echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
+    elif [ -n "${BASH_VERSION:-}" ]; then
+      log "add it with: echo 'export PATH=\"${INSTALL_DIR}:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    else
+      log "add ${INSTALL_DIR} to your shell PATH, then run '${BINARY_NAME} --version'"
+    fi
+    log "you can run now with: ${INSTALL_DIR}/${BINARY_NAME} --version"
+  fi
 }
 
 main "$@"
