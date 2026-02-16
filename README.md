@@ -62,7 +62,7 @@ post, reply, edit, and moderate your feed without leaving the terminal.
 
 ## Install
 
-This installer is currently pinned to `v0.1.0`.
+This installer is currently pinned to `v0.2.0`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
