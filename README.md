@@ -95,11 +95,17 @@ echo 'export PATH="$GOPATH/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-### Using Homebrew (macOS/Linux)
+### Using Homebrew (macOS)
 
 ```sh
 brew tap CrestNiraj12/terminalrant
-brew install terminalrant
+brew install --cask terminalrant
+```
+
+Since the binary is not signed/notarized, remove the quarantine attribute after installation:
+
+```sh
+xattr -dr com.apple.quarantine $(which terminalrant)
 ```
 
 ### Using Scoop (Windows)
