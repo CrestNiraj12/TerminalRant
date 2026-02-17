@@ -50,6 +50,28 @@ func usage() string {
 	return "Usage: terminalrant [--version|-version|-v] [--help|-h]"
 }
 
+func hasCommitInfo(c string) bool {
+	c = strings.TrimSpace(c)
+	return c != "" && c != "none"
+}
+
+func hasBuiltInfo(d string) bool {
+	d = strings.TrimSpace(d)
+	return d != "" && d != "unknown"
+}
+
+func formatVersionOutput(v, c, d string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "TerminalRant %s\n", v)
+	if hasCommitInfo(c) {
+		fmt.Fprintf(&b, "commit: %s\n", c)
+	}
+	if hasBuiltInfo(d) {
+		fmt.Fprintf(&b, "built: %s\n", d)
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
 func resolveVersionInfo(v, c, d, moduleVersion string, settings map[string]string) (string, string, string) {
 	if v == "dev" {
 		mv := strings.TrimSpace(moduleVersion)
@@ -96,7 +118,7 @@ func main() {
 	switch mode {
 	case cliVersion:
 		v, c, d := resolvedRuntimeVersionInfo(version, commit, date)
-		fmt.Printf("TerminalRant %s\ncommit: %s\nbuilt: %s\n", v, c, d)
+		fmt.Println(formatVersionOutput(v, c, d))
 		return
 	case cliHelp:
 		fmt.Println(usage())

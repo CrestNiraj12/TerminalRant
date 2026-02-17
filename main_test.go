@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,29 @@ func TestParseCLIArgs(t *testing.T) {
 				t.Fatalf("msg mismatch: got %q want %q", msg, tc.msg)
 			}
 		})
+	}
+}
+
+func TestFormatVersionOutput_HidesUnknownFields(t *testing.T) {
+	out := formatVersionOutput("v0.4.1", "none", "unknown")
+	if !strings.Contains(out, "TerminalRant v0.4.1") {
+		t.Fatalf("missing version line: %q", out)
+	}
+	if strings.Contains(out, "commit:") {
+		t.Fatalf("commit line should be hidden when unknown: %q", out)
+	}
+	if strings.Contains(out, "built:") {
+		t.Fatalf("built line should be hidden when unknown: %q", out)
+	}
+}
+
+func TestFormatVersionOutput_ShowsKnownFields(t *testing.T) {
+	out := formatVersionOutput("v0.4.1", "abc123", "2026-02-17T00:00:00Z")
+	if !strings.Contains(out, "commit: abc123") {
+		t.Fatalf("missing commit line: %q", out)
+	}
+	if !strings.Contains(out, "built: 2026-02-17T00:00:00Z") {
+		t.Fatalf("missing built line: %q", out)
 	}
 }
 

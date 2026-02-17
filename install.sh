@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_OWNER="CrestNiraj12"
 REPO_NAME="terminalrant"
 BINARY_NAME="terminalrant"
-PINNED_VERSION="0.4.1"
+PINNED_VERSION="0.4.2"
 TMP_DIR=""
 
 DEFAULT_INSTALL_DIR="/usr/local/bin"
