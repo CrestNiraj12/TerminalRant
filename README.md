@@ -82,6 +82,21 @@ state in `~/.config/terminalrant` by default.
 
 ## Install
 
+### Using go install (Go 1.25+)
+
+```sh
+go install github.com/CrestNiraj12/terminalrant@latest
+```
+
+Ensure `$GOPATH/bin` is in your PATH:
+
+```sh
+echo 'export PATH="$GOPATH/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+### Using installer script
+
 The installer is pinned to `v0.2.0` and verifies downloaded binaries with
 `checksums.txt` before installing.
 
@@ -104,13 +119,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-Verify:
+### Build from source
 
-```sh
-terminalrant --version
-```
-
-Build from source (Go 1.25+):
+Clone and build locally (Go 1.25+):
 
 ```sh
 go install ./...
@@ -120,6 +131,12 @@ Or run directly:
 
 ```sh
 go run .
+```
+
+### Verify installation
+
+```sh
+terminalrant --version
 ```
 
 ## Configuration
