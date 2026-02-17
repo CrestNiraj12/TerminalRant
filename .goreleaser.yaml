@@ -40,10 +40,6 @@ release:
   github:
     owner: CrestNiraj12
     name: terminalrant
-  # Use CHANGELOG.md as the source of truth for release notes
-  # The release notes will be dynamically generated from CHANGELOG.md via CI
-  header: "{{ .Env.RELEASE_HEADER }}"
-  footer: "{{ .Env.RELEASE_FOOTER }}"
 
 homebrew_casks:
   - name: terminalrant
@@ -56,13 +52,6 @@ homebrew_casks:
     repository:
       owner: CrestNiraj12
       name: homebrew-terminalrant
-    # Remove quarantine attribute since binary isn't signed/notarized
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/terminalrant"]
-          end
 
 scoops:
   - name: terminalrant
