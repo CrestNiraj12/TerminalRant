@@ -11,6 +11,7 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,59 +21,48 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Extract release notes from CHANGELOG.md
-        id: changelog
+      - name: Build release notes from CHANGELOG.md
         run: |
-          # Extract the version from the tag (remove 'v' prefix for matching)
-          VERSION="${GITHUB_REF_NAME}"
+          TAG="${GITHUB_REF_NAME}"
 
-          # Extract the section for this version from CHANGELOG.md
-          # This matches from "## [vX.X.X]" until the next "## [" or end of file
-          RELEASE_NOTES=$(awk -v ver="$VERSION" '
-            BEGIN { found=0; printing=0 }
-            /^## \[/ {
-              if (printing) exit
-              if (index($0, ver) > 0) { found=1; printing=1; next }
-            }
-            printing { print }
-          ' CHANGELOG.md)
+          echo "Generating release notes for $TAG"
 
-          # If no specific version found, use a default message
-          if [ -z "$RELEASE_NOTES" ]; then
-            RELEASE_NOTES="See [CHANGELOG.md](https://github.com/CrestNiraj12/terminalrant/blob/main/CHANGELOG.md) for details."
+          rm -f /tmp/release_notes.md
+
+          # ---- HEADER ----
+          if [ -f release-header.md ]; then
+            sed "s/{{ .Version }}/${TAG}/g" release-header.md >> /tmp/release_notes.md
+            echo "" >> /tmp/release_notes.md
           fi
 
-          # Write release notes to a temporary file
-          echo "$RELEASE_NOTES" > /tmp/release_notes.md
+          # ---- CHANGELOG SECTION ----
+          awk -v ver="$TAG" '
+            BEGIN { printing=0 }
+            /^## \[/ {
+              if (printing) exit
+              if (index($0, ver) > 0) { printing=1; next }
+            }
+            printing { print }
+          ' CHANGELOG.md >> /tmp/release_notes.md
 
-          echo "Release notes extracted for $VERSION"
+          # Fallback if section not found
+          if ! grep -q . /tmp/release_notes.md; then
+            echo "See CHANGELOG.md for details." >> /tmp/release_notes.md
+          fi
 
-      - name: Read release header and footer
-        id: release_templates
-        run: |
-          # Read header and footer files, replacing {{ .Version }} with actual version
-          HEADER=$(sed "s/{{ .Version }}/${GITHUB_REF_NAME}/g" release-header.md)
-          FOOTER=$(sed "s/{{ .Version }}/${GITHUB_REF_NAME}/g" release-footer.md)
+          echo "" >> /tmp/release_notes.md
 
-          # Export as environment variables using heredoc for multiline
-          {
-            echo "RELEASE_HEADER<<EOF"
-            echo "$HEADER"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
+          # ---- FOOTER ----
+          if [ -f release-footer.md ]; then
+            sed "s/{{ .Version }}/${TAG}/g" release-footer.md >> /tmp/release_notes.md
+          fi
 
-          {
-            echo "RELEASE_FOOTER<<EOF"
-            echo "$FOOTER"
-            echo "EOF"
-          } >> "$GITHUB_ENV"
+          echo "Final release notes:"
+          cat /tmp/release_notes.md
 
       - uses: goreleaser/goreleaser-action@v6
         with:
-          distribution: goreleaser
-          version: ~> v2
+          version: "~> v2"
           args: release --clean --release-notes=/tmp/release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-          RELEASE_HEADER: ${{ env.RELEASE_HEADER }}
-          RELEASE_FOOTER: ${{ env.RELEASE_FOOTER }}
