@@ -4,19 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	_ "golang.org/x/image/webp"
 	"image"
 	"image/color"
 	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	_ "golang.org/x/image/webp"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"path"
-	"strings
+	"strings"
 	"sync"
 	"time"
 
@@ -28,25 +28,15 @@ import (
 const (
 	previewMinASCIIWidth  = 17
 	previewMinASCIIHeight = 14
-	previewMaxASCIIWidth  = 40
-	previewMaxASCIIHeight = 30
-	previewTileWidth   = previewASCIIWidth * 2
-	previewTileHeight  = previewASCIIHeight
-	previewPaneMaxWidth = 110
+	previewTileWidth      = previewASCIIWidth * 2
+	previewTileHeight     = previewASCIIHeight
+	previewPaneMaxWidth   = 110
 )
 
 const (
 	previewASCIIWidth  = previewMinASCIIWidth
 	previewASCIIHeight = previewMinASCIIHeight
 )
-
-func (m Model) currentPreviewPaneWidth() int {
-	if m.width <= 0 {
-		return 40
-	}
-	_, preview := m.splitPaneWidths()
-	return preview
-}
 
 func (m Model) currentPostPaneWidth() int {
 	if m.width <= 0 {
@@ -57,14 +47,8 @@ func (m Model) currentPostPaneWidth() int {
 }
 
 func (m Model) splitPaneWidths() (post, preview int) {
-	total := m.width - 4 // safety/gutter
-	if total < 40 {
-		total = 40
-	}
-	usable := total - 2 // gap between panes
-	if usable < 20 {
-		usable = 20
-	}
+	total := max(m.width-4, 40) // safety/gutter
+	usable := max(total-2, 20)  // gap between panes
 	preview = usable / 2
 	post = usable - preview
 	if preview > previewPaneMaxWidth {
@@ -128,15 +112,6 @@ func (m *Model) ensureProfileAvatarPreviewCmd() tea.Cmd {
 	}
 	m.mediaLoading[key] = true
 	return fetchMediaPreview(m.profile.AvatarURL, "", key, asciiW, asciiH, false)
-}
-
-func mediaPreviewURLs(media []domain.MediaAttachment) []string {
-	targets := mediaPreviewTargets(media)
-	out := make([]string, 0, len(targets))
-	for _, t := range targets {
-		out = append(out, t.URL)
-	}
-	return out
 }
 
 type mediaPreviewTarget struct {
