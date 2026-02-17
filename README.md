@@ -95,6 +95,20 @@ echo 'export PATH="$GOPATH/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
+### Using Homebrew (macOS/Linux)
+
+```sh
+brew tap CrestNiraj12/terminalrant
+brew install terminalrant
+```
+
+### Using Scoop (Windows)
+
+```sh
+scoop bucket add terminalrant https://github.com/CrestNiraj12/scoop-terminalrant
+scoop install terminalrant
+```
+
 ### Using installer script
 
 The installer is pinned to `v0.2.0` and verifies downloaded binaries with
