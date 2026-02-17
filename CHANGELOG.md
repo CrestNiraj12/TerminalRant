@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Homebrew install docs now use macOS Cask
-- Installer pinned version bumped to v0.3.0
+- Installer pinned version bumped to v0.3.1
 
 ## [v0.3.0] - 2026-02-17
 
