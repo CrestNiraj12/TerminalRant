@@ -7,10 +7,10 @@ moderate, and browse your timelines without leaving your shell.
 
 ## Quick Start
 
-Install:
+Install (Go 1.25+):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/CrestNiraj12/terminalrant/main/install.sh | bash
+go install github.com/CrestNiraj12/terminalrant@latest
 ```
 
 Run:
