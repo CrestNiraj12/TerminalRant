@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.0] - 2026-02-17
+
+### Changed
+
+- Migrated from Homebrew Formula to Homebrew Cask for better macOS integration
+- Simplified Quick Start installation to use `go install` directly
+- Updated goreleaser configuration to fix v2 deprecation warnings
+
+### Fixed
+
+- Fixed goreleaser deprecation warnings:
+  - `archives.builds` → `archives.ids`
+  - `archives.format` → `archives.formats`
+  - `archives.format_overrides.format` → `archives.format_overrides.formats`
+  - `brews` → `homebrew_casks`
+
+### Improved
+
+- Simplified CI release notes generation workflow
+
 ## [v0.2.2] - 2026-02-17
 
 ### Added
