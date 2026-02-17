@@ -36,10 +36,89 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Features
+      regexp: "^.*feat(\\(.+\\))?!?:.+$"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^.*fix(\\(.+\\))?!?:.+$"
+      order: 1
+    - title: Documentation
+      regexp: "^.*docs(\\(.+\\))?!?:.+$"
+      order: 2
+    - title: Performance
+      regexp: "^.*perf(\\(.+\\))?!?:.+$"
+      order: 3
+    - title: Refactoring
+      regexp: "^.*refactor(\\(.+\\))?!?:.+$"
+      order: 4
+    - title: Build & CI
+      regexp: "^.*(build|ci)(\\(.+\\))?!?:.+$"
+      order: 5
+    - title: Chore & Maintenance
+      regexp: "^.*chore(\\(.+\\))?!?:.+$"
+      order: 6
+    - title: Other Changes
+      order: 999
+  filters:
+    exclude:
+      - "^style:"
+      - "^test:"
+
 release:
   github:
     owner: CrestNiraj12
     name: terminalrant
+  header: |
+    ## Release {{ .Version }}
+
+    Welcome to **terminalrant {{ .Version }}**! 🎉
+
+    This release brings improvements to installation and build automation.
+    See the changelog below for all details.
+  body_template: |
+    ## 📋 Changelog
+
+    {{ range .Groups -}}
+    ### {{ .Title }}
+    {{ range .Commits -}}
+    - {{ if .Scope }}**{{ .Scope }}:** {{ end }}{{ .Subject }} ([`{{ .ShortHash }}`](https://github.com/CrestNiraj12/terminalrant/commit/{{ .Hash }}))
+    {{ end }}
+    {{ end -}}
+
+    ## 📦 Installation
+
+    ### Using go install
+    ```sh
+    go install github.com/CrestNiraj12/terminalrant@{{ .Version }}
+    ```
+
+    ### Using Homebrew
+    ```sh
+    brew install CrestNiraj12/terminalrant/terminalrant
+    ```
+
+    ### Using Scoop
+    ```sh
+    scoop install terminalrant
+    ```
+
+    ### Manual Download
+    Download the binary for your platform from the assets below.
+
+    ## 🙏 Thank You
+
+    Thanks to all contributors and users who make terminalrant better!
+  footer: |
+    ---
+
+    **Resources:**
+    - [GitHub Repository](https://github.com/CrestNiraj12/terminalrant)
+    - [Issue Tracker](https://github.com/CrestNiraj12/terminalrant/issues)
+    - [Discussions](https://github.com/CrestNiraj12/terminalrant/discussions)
 
 brews:
   - name: terminalrant
