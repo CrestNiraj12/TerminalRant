@@ -2,15 +2,10 @@ version: 2
 
 project_name: terminalrant
 
-before:
-  hooks:
-    - go mod tidy
-
 builds:
   - id: terminalrant
     main: .
-    env:
-      - CGO_ENABLED=0
+    binary: terminalrant
     flags:
       - -trimpath
     ldflags:
@@ -18,36 +13,52 @@ builds:
       - -X main.version={{.Version}}
       - -X main.commit={{.Commit}}
       - -X main.date={{.Date}}
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
     ignore:
       - goos: windows
         goarch: arm64
+    env:
+      - CGO_ENABLED=0
 
 archives:
-  - formats:
-      - tar.gz
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: default
+    builds: [terminalrant]
+    format: tar.gz
     format_overrides:
       - goos: windows
-        formats:
-          - zip
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE*
+      - README*
 
 checksum:
   name_template: "checksums.txt"
 
 release:
-  header: |
-    {{- if .Env.TAG_MESSAGE }}
-    {{ .Env.TAG_MESSAGE }}
-
-    ---
-    {{- end }}
   github:
     owner: CrestNiraj12
     name: terminalrant
+
+brews:
+  - name: terminalrant
+    description: "Rant space for developers who live in terminal"
+    homepage: "https://github.com/CrestNiraj12/terminalrant"
+    license: "MIT"
+    repository:
+      owner: CrestNiraj12
+      name: homebrew-terminalrant
+    install: |
+      bin.install "terminalrant"
+    test: |
+      system "#{bin}/terminalrant", "--help"
+
+scoops:
+  - name: terminalrant
+    description: "Rant space for developers who live in terminal"
+    homepage: "https://github.com/CrestNiraj12/terminalrant"
+    license: "MIT"
+    repository:
+      owner: CrestNiraj12
+      name: scoop-terminalrant

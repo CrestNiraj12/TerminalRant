@@ -38,10 +38,6 @@ func (m Model) getSelectedRant() domain.Rant {
 	return m.rants[m.cursor].Rant
 }
 
-func (m Model) getSelectedRantID() string {
-	return m.getSelectedRant().ID
-}
-
 func (m Model) lastFeedID() string {
 	if len(m.rants) == 0 {
 		return ""
@@ -391,21 +387,6 @@ func (m *Model) restoreFeedTopAnchor(id string, offset int) {
 	}
 	m.startIndex = foundPos
 	m.scrollLine = spans[foundPos].top
-}
-
-func (m Model) feedTotalLines(cardWidth, bodyWidth int) int {
-	visible := m.visibleIndices()
-	if len(visible) == 0 {
-		return 0
-	}
-	total := 0
-	for i, idx := range visible {
-		total += m.feedItemRenderedLines(m.rants[idx].Rant, cardWidth, bodyWidth)
-		if i < len(visible)-1 {
-			total += 1
-		}
-	}
-	return total
 }
 
 func (m Model) currentFeedQueryKey() string {

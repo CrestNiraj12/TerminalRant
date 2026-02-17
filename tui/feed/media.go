@@ -66,22 +66,6 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func firstMediaPreviewURL(media []domain.MediaAttachment) string {
-	urls := mediaPreviewURLs(media)
-	if len(urls) > 0 {
-		return urls[0]
-	}
-	return ""
-}
-
-func firstMediaOpenURL(media []domain.MediaAttachment) string {
-	urls := mediaOpenURLs(media)
-	if len(urls) > 0 {
-		return urls[0]
-	}
-	return ""
-}
-
 func mediaPreviewURLs(media []domain.MediaAttachment) []string {
 	targets := mediaPreviewTargets(media)
 	out := make([]string, 0, len(targets))
