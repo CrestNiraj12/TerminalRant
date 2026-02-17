@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,11 +50,53 @@ func usage() string {
 	return "Usage: terminalrant [--version|-version|-v] [--help|-h]"
 }
 
+func resolveVersionInfo(v, c, d, moduleVersion string, settings map[string]string) (string, string, string) {
+	if v == "dev" {
+		mv := strings.TrimSpace(moduleVersion)
+		if mv != "" && mv != "(devel)" {
+			v = mv
+		}
+	}
+	if c == "none" {
+		rev := strings.TrimSpace(settings["vcs.revision"])
+		if rev != "" {
+			if len(rev) > 12 {
+				rev = rev[:12]
+			}
+			c = rev
+		}
+	}
+	if d == "unknown" {
+		t := strings.TrimSpace(settings["vcs.time"])
+		if t != "" {
+			d = t
+		}
+	}
+	return v, c, d
+}
+
+func buildSettingsMap(in []debug.BuildSetting) map[string]string {
+	out := make(map[string]string, len(in))
+	for _, s := range in {
+		out[s.Key] = s.Value
+	}
+	return out
+}
+
+func resolvedRuntimeVersionInfo(v, c, d string) (string, string, string) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info == nil {
+		return v, c, d
+	}
+	return resolveVersionInfo(v, c, d, info.Main.Version, buildSettingsMap(info.Settings))
+}
+
 func main() {
 	mode, msg := parseCLIArgs(os.Args[1:])
 	switch mode {
 	case cliVersion:
-		fmt.Printf("TerminalRant %s\ncommit: %s\nbuilt: %s\n", version, commit, date)
+		v, c, d := resolvedRuntimeVersionInfo(version, commit, date)
+		fmt.Printf("TerminalRant %s\ncommit: %s\nbuilt: %s\n", v, c, d)
 		return
 	case cliHelp:
 		fmt.Println(usage())

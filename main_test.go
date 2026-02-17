@@ -35,3 +35,47 @@ func TestParseCLIArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveVersionInfo_TaggedModuleVersion(t *testing.T) {
+	v, c, d := resolveVersionInfo(
+		"dev",
+		"none",
+		"unknown",
+		"v0.4.0",
+		map[string]string{
+			"vcs.revision": "0123456789abcdef",
+			"vcs.time":     "2026-02-17T00:00:00Z",
+		},
+	)
+	if v != "v0.4.0" {
+		t.Fatalf("expected tagged module version, got %q", v)
+	}
+	if c != "0123456789ab" {
+		t.Fatalf("expected shortened revision, got %q", c)
+	}
+	if d != "2026-02-17T00:00:00Z" {
+		t.Fatalf("expected vcs time, got %q", d)
+	}
+}
+
+func TestResolveVersionInfo_DevelModuleVersionKeepsDev(t *testing.T) {
+	v, c, d := resolveVersionInfo(
+		"dev",
+		"none",
+		"unknown",
+		"(devel)",
+		map[string]string{
+			"vcs.revision": "abc123",
+			"vcs.time":     "2026-02-17T00:00:00Z",
+		},
+	)
+	if v != "dev" {
+		t.Fatalf("expected dev version to remain for devel module, got %q", v)
+	}
+	if c != "abc123" {
+		t.Fatalf("expected revision fallback, got %q", c)
+	}
+	if d != "2026-02-17T00:00:00Z" {
+		t.Fatalf("expected vcs time fallback, got %q", d)
+	}
+}
