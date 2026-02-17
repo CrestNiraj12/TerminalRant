@@ -25,7 +25,6 @@ state in `~/.config/terminalrant` by default.
 ## Screenshots
 
 ![TerminalRant feed view](screenshots/terminalrant-feed.png)
-![TerminalRant usage](screenshots/terminalrant-recording.mov)
 
 ## Features
 
