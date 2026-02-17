@@ -111,9 +111,6 @@ scoop install terminalrant
 
 ### Using installer script
 
-The installer is pinned to `v0.2.0` and verifies downloaded binaries with
-`checksums.txt` before installing.
-
 Install to default directory:
 
 ```sh
