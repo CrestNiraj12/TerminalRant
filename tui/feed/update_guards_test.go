@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func TestUpdate_StaleRantsLoaded_IgnoredByReqSeq(t *testing.T) {

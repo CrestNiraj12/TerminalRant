@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func (m Model) fetchThread(id string) tea.Cmd {

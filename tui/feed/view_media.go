@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 
 	"github.com/charmbracelet/lipgloss"
 )

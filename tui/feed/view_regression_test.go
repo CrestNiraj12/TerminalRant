@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func TestRenderDetailView_ContainsThreadAndMediaSections(t *testing.T) {

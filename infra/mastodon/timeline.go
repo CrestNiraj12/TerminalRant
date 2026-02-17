@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 // timelineService implements app.TimelineService using the Mastodon API.

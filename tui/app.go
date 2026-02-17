@@ -10,13 +10,13 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/app"
-	"terminalrant/domain"
-	"terminalrant/infra/config"
-	"terminalrant/infra/editor"
-	"terminalrant/tui/common"
-	"terminalrant/tui/compose"
-	"terminalrant/tui/feed"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/infra/config"
+	"github.com/CrestNiraj12/terminalrant/infra/editor"
+	"github.com/CrestNiraj12/terminalrant/tui/common"
+	"github.com/CrestNiraj12/terminalrant/tui/compose"
+	"github.com/CrestNiraj12/terminalrant/tui/feed"
 )
 
 // Deps holds all dependencies the TUI needs. Plain struct, not a DI container.

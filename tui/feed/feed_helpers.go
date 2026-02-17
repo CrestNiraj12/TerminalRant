@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"terminalrant/domain"
-	"terminalrant/tui/common"
+	"github.com/CrestNiraj12/terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/tui/common"
 )
 
 func (m Model) Rants() []domain.Rant {

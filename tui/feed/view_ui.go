@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"terminalrant/domain"
-	"terminalrant/tui/common"
+	"github.com/CrestNiraj12/terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/tui/common"
 
 	"github.com/charmbracelet/lipgloss"
 )

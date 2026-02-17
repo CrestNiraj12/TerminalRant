@@ -1,4 +1,4 @@
-module terminalrant
+module github.com/CrestNiraj12/terminalrant
 
 go 1.25.5
 

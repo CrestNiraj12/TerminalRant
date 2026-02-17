@@ -15,7 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 	"time"
 )
 

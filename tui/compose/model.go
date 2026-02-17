@@ -6,8 +6,8 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/app"
-	"terminalrant/infra/editor"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/infra/editor"
 )
 
 // --- Mode ---

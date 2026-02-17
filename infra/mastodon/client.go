@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"terminalrant/infra/auth"
+	"github.com/CrestNiraj12/terminalrant/infra/auth"
 )
 
 // Client is a thin HTTP wrapper for the Mastodon API.

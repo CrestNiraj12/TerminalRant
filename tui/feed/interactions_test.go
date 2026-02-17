@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func TestApplyLikeToggleAndThreadCacheLikeToggle(t *testing.T) {

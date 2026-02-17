@@ -3,8 +3,8 @@ package feed
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/app"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func (m Model) handleDetailThreadMsg(msg tea.Msg) (Model, tea.Cmd) {

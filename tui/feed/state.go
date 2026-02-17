@@ -7,9 +7,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"terminalrant/app"
-	"terminalrant/domain"
-	"terminalrant/tui/common"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/tui/common"
 )
 
 const (

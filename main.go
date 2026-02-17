@@ -8,11 +8,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/infra/auth"
-	"terminalrant/infra/config"
-	"terminalrant/infra/editor"
-	"terminalrant/infra/mastodon"
-	"terminalrant/tui"
+	"github.com/CrestNiraj12/terminalrant/infra/auth"
+	"github.com/CrestNiraj12/terminalrant/infra/config"
+	"github.com/CrestNiraj12/terminalrant/infra/editor"
+	"github.com/CrestNiraj12/terminalrant/infra/mastodon"
+	"github.com/CrestNiraj12/terminalrant/tui"
 )
 
 var (

@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/app"
 )
 
 func (m Model) handleProfileBlockFollowMsg(msg tea.Msg) (Model, tea.Cmd) {

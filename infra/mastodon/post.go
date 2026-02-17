@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 // postService implements app.PostService using the Mastodon API.

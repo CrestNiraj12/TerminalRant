@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 type Profile struct {

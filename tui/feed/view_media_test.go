@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func TestRenderSelectedMediaPreviewPanel_GridModes(t *testing.T) {

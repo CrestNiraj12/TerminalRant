@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"terminalrant/app"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 func TestView_RendersExpectedModeSections(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 	"testing"
 	"time"
 )

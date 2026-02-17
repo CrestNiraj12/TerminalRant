@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 // PostService publishes, edits, and deletes rants on a social backend.

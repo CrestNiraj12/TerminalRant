@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"terminalrant/app"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 // accountService implements app.AccountService using the Mastodon API.

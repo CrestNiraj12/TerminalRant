@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"terminalrant/app"
-	"terminalrant/domain"
+	"github.com/CrestNiraj12/terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
 type stubTimeline struct{}

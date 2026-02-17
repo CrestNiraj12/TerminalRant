@@ -6,7 +6,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"terminalrant/app"
+	"github.com/CrestNiraj12/terminalrant/app"
 )
 
 func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
