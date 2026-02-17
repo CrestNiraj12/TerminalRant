@@ -22,9 +22,10 @@ terminalrant
 On first run, TerminalRant opens your browser for OAuth login and stores auth
 state in `~/.config/terminalrant` by default.
 
-## Screenshot
+## Screenshots
 
 ![TerminalRant feed view](screenshots/terminalrant-feed.png)
+![TerminalRant usage](screenshots/terminalrant-recording.mov)
 
 ## Features
 
