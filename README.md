@@ -26,6 +26,9 @@ state in `~/.config/terminalrant` by default.
 
 ![TerminalRant feed view](screenshots/terminalrant-feed.png)
 
+https://github.com/user-attachments/assets/514dca65-61dc-4ef6-8f41-0dc5c6976351
+
+
 ## Features
 
 - OAuth login
