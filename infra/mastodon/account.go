@@ -46,6 +46,7 @@ func (s *accountService) CurrentProfile(_ context.Context) (app.Profile, error) 
 		Acct           string `json:"acct"`
 		DisplayName    string `json:"display_name"`
 		Note           string `json:"note"`
+		URL            string `json:"url"`
 		Avatar         string `json:"avatar"`
 		AvatarStatic   string `json:"avatar_static"`
 		StatusesCount  int    `json:"statuses_count"`
@@ -62,6 +63,7 @@ func (s *accountService) CurrentProfile(_ context.Context) (app.Profile, error) 
 		Username:    sanitizeForTerminal(acct.Acct),
 		DisplayName: sanitizeForTerminal(acct.DisplayName),
 		Bio:         stripHTML(acct.Note),
+		URL:         sanitizeForTerminal(acct.URL),
 		AvatarURL:   sanitizeForTerminal(firstNonEmpty(acct.AvatarStatic, acct.Avatar)),
 		PostsCount:  acct.StatusesCount,
 		Followers:   acct.FollowersCount,
@@ -158,6 +160,7 @@ func (s *accountService) ProfileByID(_ context.Context, accountID string) (app.P
 		Acct           string `json:"acct"`
 		DisplayName    string `json:"display_name"`
 		Note           string `json:"note"`
+		URL            string `json:"url"`
 		Avatar         string `json:"avatar"`
 		AvatarStatic   string `json:"avatar_static"`
 		StatusesCount  int    `json:"statuses_count"`
@@ -172,6 +175,7 @@ func (s *accountService) ProfileByID(_ context.Context, accountID string) (app.P
 		Username:    sanitizeForTerminal(acct.Acct),
 		DisplayName: sanitizeForTerminal(acct.DisplayName),
 		Bio:         stripHTML(acct.Note),
+		URL:         sanitizeForTerminal(acct.URL),
 		AvatarURL:   sanitizeForTerminal(firstNonEmpty(acct.AvatarStatic, acct.Avatar)),
 		PostsCount:  acct.StatusesCount,
 		Followers:   acct.FollowersCount,

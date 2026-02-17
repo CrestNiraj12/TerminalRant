@@ -30,3 +30,15 @@ func TestClipLines(t *testing.T) {
 		t.Fatalf("unexpected clipped output: %q", got)
 	}
 }
+
+func TestSplitUsernameDomain(t *testing.T) {
+	local, domain := splitUsernameDomain("alice@example.social")
+	if local != "alice" || domain != "example.social" {
+		t.Fatalf("unexpected split: local=%q domain=%q", local, domain)
+	}
+
+	local, domain = splitUsernameDomain("bob")
+	if local != "bob" || domain != "" {
+		t.Fatalf("unexpected local-only split: local=%q domain=%q", local, domain)
+	}
+}

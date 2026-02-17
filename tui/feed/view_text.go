@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func truncateToTwoLines(text string, width int) string {
@@ -117,11 +118,34 @@ func authorStyleFor(username string, isOwn bool) lipgloss.Style {
 }
 
 func renderAuthor(username string, isOwn bool, followed bool) string {
-	out := authorStyleFor(username, isOwn).Render("@" + username)
+	local, domain := splitUsernameDomain(username)
+	out := authorStyleFor(username, isOwn).Render("@" + local)
+	if domain != "" {
+		out += " " + lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8E8E8E")).
+			Faint(true).
+			Render("@" + domain)
+	}
 	if followed && !isOwn {
 		out += lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Faint(true).Render(" ✓")
 	}
 	return out
+}
+
+func splitUsernameDomain(username string) (local, domain string) {
+	u := strings.TrimSpace(username)
+	if u == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(u, "@", 2)
+	local = strings.TrimSpace(parts[0])
+	if local == "" {
+		local = u
+	}
+	if len(parts) > 1 {
+		domain = strings.TrimSpace(parts[1])
+	}
+	return local, domain
 }
 
 func clipLines(text string, maxLines int) string {
@@ -133,4 +157,18 @@ func clipLines(text string, maxLines int) string {
 		return text
 	}
 	return strings.Join(lines[:maxLines], "\n")
+}
+
+func clampLinesToWidth(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, ln := range lines {
+		if ansi.StringWidth(ln) <= width {
+			continue
+		}
+		lines[i] = ansi.Cut(ln, 0, width)
+	}
+	return strings.Join(lines, "\n")
 }

@@ -9,13 +9,14 @@ import (
 	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	_ "golang.org/x/image/webp"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"path"
-	"strings"
+	"strings
 	"sync"
 	"time"
 
@@ -74,51 +75,16 @@ func (m Model) splitPaneWidths() (post, preview int) {
 }
 
 func (m Model) previewSizing(total int) (asciiW, asciiH, tileW, tileH int) {
-	paneW := m.currentPreviewPaneWidth()
-	cols := 1
-	columnGap := 1
-	if m.showDetail {
-		columnGap = 3
-		if total >= 2 {
-			cols = 2
-		}
-	}
-	usable := paneW
-	if !m.showDetail && total > 1 {
-		usable -= 5 // reserve for +N label on the right
-	}
-	if usable < previewTileWidth {
-		usable = previewTileWidth
-	}
-	tileW = usable
-	if cols == 2 {
-		candidate := (usable - columnGap) / 2
-		if candidate >= previewTileWidth {
-			tileW = candidate
-		}
-	}
-	asciiW = max(tileW/2, previewMinASCIIWidth)
-	if asciiW > previewMaxASCIIWidth {
-		asciiW = previewMaxASCIIWidth
-	}
-	asciiH = int(math.Round(float64(asciiW) * 0.82))
-	if asciiH < previewMinASCIIHeight {
-		asciiH = previewMinASCIIHeight
-	}
-	if asciiH > previewMaxASCIIHeight {
-		asciiH = previewMaxASCIIHeight
-	}
-	tileW = asciiW * 2
-	tileH = asciiH
-	return asciiW, asciiH, tileW, tileH
+	_ = total
+	return previewASCIIWidth, previewASCIIHeight, previewTileWidth, previewTileHeight
 }
 
 func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
-	if !m.showMediaPreview {
-		return nil
-	}
 	if m.showProfile {
 		return m.ensureProfileAvatarPreviewCmd()
+	}
+	if !m.showMediaPreview {
+		return nil
 	}
 	r := m.getSelectedRant()
 	if m.showDetail {
@@ -330,23 +296,30 @@ func fetchMediaPreview(url, fallbackURL, key string, w, h int, animated bool) te
 			}
 		}
 
-		preview, frames, err := loadStaticMediaPreview(url, w, h, animated)
-		if err == nil {
-			return MediaPreviewLoadedMsg{Key: key, Preview: preview, Frames: frames}
-		}
-		if fallbackURL != "" {
-			preview, frames, ferr := loadStaticMediaPreview(fallbackURL, w, h, false)
-			if ferr == nil {
+		var lastErr error
+		candidates := previewURLCandidates(url, fallbackURL)
+		for i, candidate := range candidates {
+			allowGIFAnimation := animated && i == 0
+			preview, frames, err := loadStaticMediaPreview(candidate, w, h, allowGIFAnimation)
+			if err == nil {
 				return MediaPreviewLoadedMsg{Key: key, Preview: preview, Frames: frames}
 			}
+			lastErr = err
 		}
-		return MediaPreviewLoadedMsg{Key: key, Err: err}
+		return MediaPreviewLoadedMsg{Key: key, Err: lastErr}
 	}
 }
 
 func loadStaticMediaPreview(url string, w, h int, allowGIFAnimation bool) (string, []string, error) {
 	client := &http.Client{Timeout: 6 * time.Second}
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("User-Agent", "terminalrant/1.0")
+	req.Header.Set("Accept", "image/*,*/*;q=0.8")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", nil, err
 	}
@@ -368,6 +341,42 @@ func loadStaticMediaPreview(url string, w, h int, allowGIFAnimation bool) (strin
 		return "", nil, err
 	}
 	return renderANSIThumbnail(img, w, h), nil, nil
+}
+
+func previewURLCandidates(primary, fallback string) []string {
+	out := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	push := func(u string) {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			return
+		}
+		if _, ok := seen[u]; ok {
+			return
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	push(primary)
+	push(stripURLQuery(primary))
+	push(fallback)
+	push(stripURLQuery(fallback))
+	return out
+}
+
+func stripURLQuery(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.String()
 }
 
 func mediaOpenURLs(media []domain.MediaAttachment) []string {

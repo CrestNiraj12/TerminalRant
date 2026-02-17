@@ -178,7 +178,6 @@ func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, sh
 	panel := m.renderSelectedMediaPreviewPanel()
 	previewPane := clipLines(panel, viewHeight)
 	previewPane = lipgloss.NewStyle().
-		Width(m.currentPreviewPaneWidth()).
 		MaxHeight(viewHeight).
 		Render(previewPane)
 	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, "  ", previewPane)

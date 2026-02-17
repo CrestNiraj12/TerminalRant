@@ -1,6 +1,8 @@
 package feed
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/CrestNiraj12/terminalrant/app"
@@ -13,6 +15,7 @@ func (m Model) handleDetailThreadMsg(msg tea.Msg) (Model, tea.Cmd) {
 		if msg.ForceReset {
 			m.showDetail = false
 			m.confirmDelete = false
+			m.deleteTargetID = ""
 			m.confirmBlock = false
 			m.confirmFollow = false
 			m.blockAccountID = ""
@@ -104,7 +107,12 @@ func (m Model) handleDetailThreadMsg(msg tea.Msg) (Model, tea.Cmd) {
 	case MediaPreviewLoadedMsg:
 		delete(m.mediaLoading, msg.Key)
 		if msg.Err != nil {
-			m.mediaPreview[msg.Key] = ""
+			if strings.HasPrefix(msg.Key, "profile-avatar|") {
+				// Keep retrying profile avatars; remote avatar URLs can be temporarily unavailable.
+				delete(m.mediaPreview, msg.Key)
+			} else {
+				m.mediaPreview[msg.Key] = ""
+			}
 			delete(m.mediaFrames, msg.Key)
 			delete(m.mediaFrameIndex, msg.Key)
 			return m, nil

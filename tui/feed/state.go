@@ -115,6 +115,8 @@ type EditProfileMsg struct {
 	UseInline bool
 }
 
+type SwitchToTerminalRantMsg struct{}
+
 // EditRantMsg is sent when the user selects 'Edit' from the action menu.
 type EditRantMsg struct {
 	Rant      domain.Rant
@@ -274,6 +276,7 @@ type uiState struct {
 
 type detailState struct {
 	confirmDelete    bool // Whether we are in the 'Are you sure?' delete step
+	deleteTargetID   string
 	showDetail       bool // Whether we are in full-post view
 	ancestors        []domain.Rant
 	replies          []domain.Rant

@@ -88,6 +88,20 @@ func TestRenderSelectedMediaPreviewPanel_DetailShowsAllPreviews(t *testing.T) {
 	}
 }
 
+func TestPreviewSizing_UsesFixedMediaDimensions(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.showDetail = true
+	m.width = 88
+
+	asciiW, asciiH, tileW, tileH := m.previewSizing(4)
+	if asciiW != previewASCIIWidth || asciiH != previewASCIIHeight {
+		t.Fatalf("expected fixed ascii dimensions, got %dx%d", asciiW, asciiH)
+	}
+	if tileW != previewTileWidth || tileH != previewTileHeight {
+		t.Fatalf("expected fixed tile dimensions, got %dx%d", tileW, tileH)
+	}
+}
+
 func TestRenderSelectedMediaPreviewPanel_SingleUsesBasePreview(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.showMediaPreview = true
@@ -105,6 +119,22 @@ func TestRenderSelectedMediaPreviewPanel_SingleUsesBasePreview(t *testing.T) {
 	panel := m.renderSelectedMediaPreviewPanel()
 	if !strings.Contains(panel, "BASE_PREVIEW") {
 		t.Fatalf("expected base preview in single-image panel")
+	}
+}
+
+func TestPreviewURLCandidates_DedupesAndStripsQuery(t *testing.T) {
+	out := previewURLCandidates(
+		"https://cdn.example/avatar.webp?x=1&y=2",
+		"https://cdn.example/avatar.webp?x=1&y=2",
+	)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 unique candidates, got %d: %#v", len(out), out)
+	}
+	if out[0] != "https://cdn.example/avatar.webp?x=1&y=2" {
+		t.Fatalf("unexpected first candidate: %q", out[0])
+	}
+	if out[1] != "https://cdn.example/avatar.webp" {
+		t.Fatalf("unexpected stripped candidate: %q", out[1])
 	}
 }
 

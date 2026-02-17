@@ -48,6 +48,7 @@ func (m Model) handleProfileBlockFollowMsg(msg tea.Msg) (Model, tea.Cmd) {
 		m.profilePosts = msg.Posts
 		m.profileCursor = 0
 		m.profileStart = 0
+		m.detailScrollLine = 0
 		m.ensureProfileCursorVisible()
 		if msg.Profile.ID != "" {
 			// Best-effort local relationship hydration for profile header.

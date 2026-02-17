@@ -43,6 +43,36 @@ func TestRenderDetailView_ContainsThreadAndMediaSections(t *testing.T) {
 	}
 }
 
+func TestRenderDetailView_DeleteConfirmShowsBeforeBody(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.width = 140
+	m.height = 44
+	m.showDetail = true
+	m.confirmDelete = true
+	m.rants = []RantItem{{Rant: domain.Rant{
+		ID:        "root",
+		AccountID: "acct-a",
+		Author:    "Alice",
+		Username:  "alice",
+		Content:   "body text here",
+		CreatedAt: time.Now(),
+	}, Status: StatusNormal}}
+	m.cursor = 0
+
+	out := m.renderDetailView()
+	confirmNeedle := "Delete this post? (y/n)"
+	bodyNeedle := "body text here"
+	if !strings.Contains(out, confirmNeedle) {
+		t.Fatalf("detail delete confirmation missing")
+	}
+	if !strings.Contains(out, bodyNeedle) {
+		t.Fatalf("detail body missing")
+	}
+	if strings.Index(out, confirmNeedle) > strings.Index(out, bodyNeedle) {
+		t.Fatalf("delete confirmation should render before body")
+	}
+}
+
 func TestRenderProfileView_ContainsProfileCardAndPostsSection(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.width = 140
@@ -71,5 +101,46 @@ func TestRenderProfileView_ContainsProfileCardAndPostsSection(t *testing.T) {
 		if !strings.Contains(out, needle) {
 			t.Fatalf("profile view missing %q", needle)
 		}
+	}
+}
+
+func TestRenderProfileView_LongBioStillShowsProfilePreviewPane(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.width = 160
+	m.height = 44
+	m.showProfile = true
+	m.profile = appProfile("42", "u42")
+	m.profile.Bio = strings.Repeat("x", 1000)
+	m.profile.AvatarURL = "https://cdn/avatar.png"
+	m.mediaPreview[profileAvatarPreviewKey(m.profile.AvatarURL)] = "AVATAR_ASCII"
+
+	out := m.renderProfileView()
+	if !strings.Contains(out, "Profile Image Preview") {
+		t.Fatalf("profile preview pane header missing")
+	}
+	if !strings.Contains(out, "AVATAR_ASCII") {
+		t.Fatalf("profile preview image missing")
+	}
+}
+
+func TestRenderProfileView_RendersPostsRegardlessOfProfileStart(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.width = 140
+	m.height = 44
+	m.showProfile = true
+	m.profile = appProfile("42", "u42")
+	m.profileStart = 999
+	m.profilePosts = []domain.Rant{{
+		ID:        "p1",
+		Author:    "User 42",
+		Username:  "u42",
+		AccountID: "42",
+		Content:   "still visible post #terminalrant",
+		CreatedAt: time.Now(),
+	}}
+
+	out := m.renderProfileView()
+	if !strings.Contains(out, "still visible post") {
+		t.Fatalf("expected profile post to render independent of profileStart")
 	}
 }

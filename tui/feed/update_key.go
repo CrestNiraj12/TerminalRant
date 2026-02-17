@@ -26,6 +26,17 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				m.followTarget = false
 			}
 			switch {
+			case msg.String() == "left":
+				if m.hScroll > 0 {
+					m.hScroll = max(m.hScroll-4, 0)
+				}
+				return m, nil
+			case msg.String() == "right":
+				m.hScroll += 4
+				if m.hScroll < 0 {
+					m.hScroll = 0
+				}
+				return m, nil
 			case key.Matches(msg, m.keys.ToggleHints):
 				m.showAllHints = true
 				return m, nil
@@ -33,6 +44,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				// h: jump to top within profile view.
 				m.profileCursor = 0
 				m.profileStart = 0
+				m.detailScrollLine = 0
 				return m, nil
 			case key.Matches(msg, m.keys.EditProfile):
 				if m.profileIsOwn && !m.profileLoading {
@@ -55,6 +67,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				m.profilePosts = nil
 				m.profileCursor = 0
 				m.profileStart = 0
+				m.detailScrollLine = 0
 				m.confirmFollow = false
 				m.followAccountID = ""
 				m.followUsername = ""
@@ -76,6 +89,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				m.profilePosts = nil
 				m.profileCursor = 0
 				m.profileStart = 0
+				m.detailScrollLine = 0
 				m.confirmFollow = false
 				m.followAccountID = ""
 				m.followUsername = ""
@@ -85,13 +99,20 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				if m.profileCursor > 0 {
 					m.profileCursor--
 				}
-				m.ensureProfileCursorVisible()
+				if m.detailScrollLine > 0 {
+					m.detailScrollLine--
+				}
 				return m, nil
 			case key.Matches(msg, m.keys.Down):
+				gate := m.profileScrollGate()
+				if m.profileCursor == 0 && m.detailScrollLine < gate {
+					m.detailScrollLine++
+					return m, nil
+				}
 				if m.profileCursor < len(m.profilePosts) {
 					m.profileCursor++
 				}
-				m.ensureProfileCursorVisible()
+				m.detailScrollLine++
 				return m, nil
 			case key.Matches(msg, m.keys.Like):
 				if m.profileCursor <= 0 || m.profileCursor > len(m.profilePosts) {
@@ -136,12 +157,27 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				m.confirmUnblock = false
 				m.unblockTarget = app.BlockedUser{}
 				return m, func() tea.Msg { return RequestBlockedUsersMsg{} }
+			case msg.String() == "i":
+				m.showMediaPreview = !m.showMediaPreview
+				if m.showMediaPreview {
+					return m, m.ensureProfileAvatarPreviewCmd()
+				}
+				return m, nil
+			case msg.String() == "I":
+				if strings.TrimSpace(m.profile.AvatarURL) != "" {
+					return m, openURL(m.profile.AvatarURL)
+				}
+				return m, nil
+			case key.Matches(msg, m.keys.Open):
+				if strings.TrimSpace(m.profile.URL) != "" {
+					return m, openURL(m.profile.URL)
+				}
+				return m, nil
 			case msg.String() == "enter":
 				if m.profileCursor > 0 && m.profileCursor <= len(m.profilePosts) {
 					target := m.profilePosts[m.profileCursor-1]
 					m.showProfile = false
 					m.returnToProfile = true
-					m.profileIsOwn = false
 					m.setCursorByID(target.ID)
 					m.showDetail = true
 					m.detailCursor = 0
@@ -412,6 +448,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
+			m.deleteTargetID = ""
 			m.moveCursorVisible(-1)
 			m.ensureFeedCursorVisible()
 			return m, m.ensureMediaPreviewCmd()
@@ -432,6 +469,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				return m, m.ensureMediaPreviewCmd()
 			}
 			m.confirmDelete = false
+			m.deleteTargetID = ""
 			m.moveCursorVisible(1)
 			m.ensureFeedCursorVisible()
 			loadMore := m.maybeStartFeedPrefetch()
@@ -454,6 +492,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 			m.returnToProfile = false
 			m.profileIsOwn = false
 			m.confirmDelete = false
+			m.deleteTargetID = ""
 			m.confirmBlock = false
 			m.confirmFollow = false
 			m.blockAccountID = ""
@@ -513,6 +552,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.LoadMore):
 			if m.confirmDelete {
 				m.confirmDelete = false
+				m.deleteTargetID = ""
 				return m, nil
 			}
 			if m.confirmBlock {
@@ -642,6 +682,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 			m.profilePosts = nil
 			m.profileCursor = 0
 			m.profileStart = 0
+			m.detailScrollLine = 0
 			return m, m.fetchProfile(r.AccountID)
 
 		case key.Matches(msg, m.keys.OpenOwnProfile):
@@ -653,15 +694,19 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 			m.profilePosts = nil
 			m.profileCursor = 0
 			m.profileStart = 0
+			m.detailScrollLine = 0
 			return m, m.fetchOwnProfile()
 
 		case key.Matches(msg, m.keys.Delete):
 			if len(m.rants) == 0 {
 				break
 			}
-			r := m.rants[m.cursor]
-			if r.Rant.IsOwn {
+			r := m.getSelectedRant()
+			if m.canDeleteRant(r) {
 				m.confirmDelete = true
+				m.deleteTargetID = r.ID
+			} else {
+				m.pagingNotice = "Cannot delete this post."
 			}
 
 		case msg.String() == "esc", msg.String() == "q":
@@ -722,16 +767,39 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			if m.confirmDelete {
 				m.confirmDelete = false
+				m.deleteTargetID = ""
 				return m, nil
 			}
 
 		case msg.String() == "y":
 			if m.confirmDelete {
-				ri := m.rants[m.cursor]
 				m.confirmDelete = false
-				ri.Status = StatusPendingDelete
-				m.rants[m.cursor] = ri
-				return m, m.deleteRant(ri.Rant.ID)
+				targetID := strings.TrimSpace(m.deleteTargetID)
+				m.deleteTargetID = ""
+				if targetID == "" {
+					targetID = strings.TrimSpace(m.getSelectedRant().ID)
+				}
+				if targetID == "" {
+					return m, nil
+				}
+				m.removeRantByID(targetID)
+				if m.showDetail {
+					if m.returnToProfile {
+						m.showDetail = false
+						m.showProfile = true
+						m.returnToProfile = false
+					} else {
+						m.showDetail = false
+						m.returnToProfile = false
+					}
+					m.focusedRant = nil
+					m.viewStack = nil
+					m.detailCursor = 0
+					m.detailStart = 0
+					m.detailScrollLine = 0
+					m.loadingReplies = false
+				}
+				return m, m.deleteRant(targetID)
 			}
 			if m.confirmBlock && m.blockAccountID != "" {
 				accountID := m.blockAccountID
@@ -752,6 +820,7 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 		case msg.String() == "n":
 			if m.confirmDelete {
 				m.confirmDelete = false
+				m.deleteTargetID = ""
 			}
 			if m.confirmBlock {
 				m.confirmBlock = false

@@ -13,6 +13,9 @@ import (
 func (m Model) handleOptimisticMsg(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case AddOptimisticRantMsg:
+		if m.feedSource != sourceTerminalRant {
+			return m, nil
+		}
 		newItem := RantItem{
 			Rant: domain.Rant{
 				ID:        fmt.Sprintf("local-%d", time.Now().UnixNano()),
@@ -82,6 +85,10 @@ func (m Model) handleOptimisticMsg(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case DeleteOptimisticRantMsg:
+		m.removeRantByID(msg.ID)
+		return m, nil
+
 	case ResultMsg:
 		if msg.Err != nil {
 			// Find the item and set to Failed.
@@ -132,16 +139,7 @@ func (m Model) handleOptimisticMsg(msg tea.Msg) (Model, tea.Cmd) {
 				}
 			}
 		} else {
-			// Success: remove from list.
-			for i, ri := range m.rants {
-				if ri.Rant.ID == msg.ID {
-					m.rants = append(m.rants[:i], m.rants[i+1:]...)
-					if m.cursor >= len(m.rants) && m.cursor > 0 {
-						m.cursor--
-					}
-					break
-				}
-			}
+			m.removeRantByID(msg.ID)
 		}
 		return m, nil
 

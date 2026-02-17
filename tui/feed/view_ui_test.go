@@ -103,6 +103,16 @@ func TestRenderKeyDialog_AllModes(t *testing.T) {
 	if out := m.renderKeyDialog(); !strings.Contains(out, "open parent post") && !strings.Contains(out, "open selected reply thread") {
 		t.Fatalf("unexpected detail key dialog: %q", out)
 	}
+	m.profileIsOwn = false
+	m.profile = appProfile("acct-other", "u42")
+	if out := m.renderKeyDialog(); strings.Contains(out, "delete selected post") {
+		t.Fatalf("detail key dialog should not include delete for non-own selected post: %q", out)
+	}
+	m.profileIsOwn = true
+	m.profile = appProfile("acct-a", "u42")
+	if out := m.renderKeyDialog(); !strings.Contains(out, "delete selected post") {
+		t.Fatalf("expected detail key dialog to include delete for own selected post: %q", out)
+	}
 	m.showDetail = false
 	m.showProfile = true
 	if out := m.renderKeyDialog(); !strings.Contains(out, "open selected post detail") {

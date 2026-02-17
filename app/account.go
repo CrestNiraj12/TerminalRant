@@ -11,6 +11,7 @@ type Profile struct {
 	Username    string
 	DisplayName string
 	Bio         string
+	URL         string
 	AvatarURL   string
 	PostsCount  int
 	Followers   int

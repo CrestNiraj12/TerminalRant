@@ -38,6 +38,57 @@ func (m Model) getSelectedRant() domain.Rant {
 	return m.rants[m.cursor].Rant
 }
 
+func (m Model) canDeleteRant(r domain.Rant) bool {
+	if strings.TrimSpace(r.ID) == "" {
+		return false
+	}
+	if r.IsOwn {
+		return true
+	}
+	// Fallback for cases where IsOwn is not hydrated in profile/detail flows.
+	if m.profileIsOwn && strings.TrimSpace(m.profile.ID) != "" && strings.TrimSpace(r.AccountID) == strings.TrimSpace(m.profile.ID) {
+		return true
+	}
+	return false
+}
+
+func (m *Model) removeRantByID(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	for i, ri := range m.rants {
+		if ri.Rant.ID == id {
+			m.rants = append(m.rants[:i], m.rants[i+1:]...)
+			if m.cursor >= len(m.rants) && m.cursor > 0 {
+				m.cursor--
+			}
+			break
+		}
+	}
+	for i, r := range m.replyAll {
+		if r.ID == id {
+			m.replyAll = append(m.replyAll[:i], m.replyAll[i+1:]...)
+			break
+		}
+	}
+	for i, r := range m.replies {
+		if r.ID == id {
+			m.replies = append(m.replies[:i], m.replies[i+1:]...)
+			break
+		}
+	}
+	for i, r := range m.ancestors {
+		if r.ID == id {
+			m.ancestors = append(m.ancestors[:i], m.ancestors[i+1:]...)
+			break
+		}
+	}
+	if m.focusedRant != nil && m.focusedRant.ID == id {
+		m.focusedRant = nil
+	}
+}
+
 func (m Model) lastFeedID() string {
 	if len(m.rants) == 0 {
 		return ""

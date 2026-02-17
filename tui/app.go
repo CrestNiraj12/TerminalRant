@@ -417,6 +417,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		localReplyID := ""
+		var preCmd tea.Cmd
+		if !msg.IsEdit && !msg.IsReply {
+			a.feed, preCmd = a.feed.Update(feed.SwitchToTerminalRantMsg{})
+		}
 		// Optimistic Update
 		if msg.IsEdit {
 			a.feed, _ = a.feed.Update(feed.UpdateOptimisticRantMsg{
@@ -440,7 +444,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Trigger background API call
-		return a, func() tea.Msg {
+		postCmd := func() tea.Msg {
 			var rant domain.Rant
 			var err error
 			if msg.IsEdit {
@@ -463,6 +467,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Err:    err,
 			}
 		}
+		return a, tea.Batch(preCmd, postCmd)
 
 	case feed.ResultMsg:
 		a.feed, _ = a.feed.Update(msg)

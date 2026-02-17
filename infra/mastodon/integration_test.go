@@ -349,6 +349,7 @@ func TestAccountService_Endpoints_RequestShapeAndMapping(t *testing.T) {
 				"acct":            "me",
 				"display_name":    "Me",
 				"note":            "<p>bio &lt;safe&gt;</p>",
+				"url":             "https://example.social/@me",
 				"statuses_count":  3,
 				"followers_count": 4,
 				"following_count": 5,
@@ -370,6 +371,7 @@ func TestAccountService_Endpoints_RequestShapeAndMapping(t *testing.T) {
 				"acct":            "u42",
 				"display_name":    "User 42",
 				"note":            "<p>about</p>",
+				"url":             "https://example.social/@u42",
 				"statuses_count":  12,
 				"followers_count": 20,
 				"following_count": 30,
@@ -393,7 +395,7 @@ func TestAccountService_Endpoints_RequestShapeAndMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("current profile failed: %v", err)
 	}
-	if p.ID != "acct-me" || !strings.Contains(p.Bio, "<safe>") {
+	if p.ID != "acct-me" || !strings.Contains(p.Bio, "<safe>") || p.URL != "https://example.social/@me" {
 		t.Fatalf("unexpected current profile: %#v", p)
 	}
 	id, err := svc.CurrentAccountID(context.Background())
@@ -413,7 +415,7 @@ func TestAccountService_Endpoints_RequestShapeAndMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("profile by id failed: %v", err)
 	}
-	if profile.Username != "u42" || profile.PostsCount != 12 {
+	if profile.Username != "u42" || profile.PostsCount != 12 || profile.URL != "https://example.social/@u42" {
 		t.Fatalf("unexpected profile mapping: %#v", profile)
 	}
 	posts, err := svc.PostsByAccount(context.Background(), "42", 20, "199")

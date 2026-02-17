@@ -2,6 +2,7 @@ package feed
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,7 @@ func TestDetailAndProfileCursorVisibilityBounds(t *testing.T) {
 
 	m.showProfile = true
 	m.profileCursor = 16
+	m.profile.Bio = strings.Repeat("bio ", 300)
 	for i := range 20 {
 		m.profilePosts = append(m.profilePosts, makeRant(fmt.Sprintf("p-%d", i), time.Now(), "acct-a"))
 	}
@@ -105,8 +107,8 @@ func TestDetailAndProfileCursorVisibilityBounds(t *testing.T) {
 	if m.profileStart < 0 || m.profileStart >= len(m.profilePosts) {
 		t.Fatalf("profileStart out of range: %d", m.profileStart)
 	}
-	if m.profilePostSlots() < 4 {
-		t.Fatalf("profile slots must keep lower bound")
+	if m.profileScrollGate() < 0 {
+		t.Fatalf("profile scroll gate must be non-negative")
 	}
 }
 

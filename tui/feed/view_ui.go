@@ -18,6 +18,9 @@ func (m Model) helpView() string {
 		items = []string{
 			"j/k: focus",
 			"enter: open",
+			"i: media",
+			"I: open image",
+			"o: open profile",
 			"v/V: edit profile",
 			"f: follow",
 			"B: blocked",
@@ -76,6 +79,9 @@ func (m Model) renderKeyDialog() string {
 		includeMove = true
 		core = []string{
 			"enter           open selected post detail",
+			"i               toggle profile image preview",
+			"I               open profile image in browser",
+			"o               open profile URL in browser",
 			"v / V           edit profile via editor / inline",
 			"f               follow/unfollow profile owner",
 			"B               show blocked users",
@@ -103,6 +109,9 @@ func (m Model) renderKeyDialog() string {
 			"h               scroll to top of post",
 			"H               go to feed home",
 			"esc / q         back",
+		}
+		if m.canDeleteRant(m.getSelectedRant()) {
+			core = append(core, "d               delete selected post")
 		}
 	} else if len(m.rants) > 0 {
 		includeMove = true
@@ -290,8 +299,8 @@ func (m Model) renderProfileView() string {
 	postWidth := 74
 	if hasProfilePreview {
 		postWidth = m.currentPostPaneWidth()
-		if postWidth < 52 {
-			postWidth = 52
+		if postWidth < 40 {
+			postWidth = 40
 		}
 	}
 	contentWidth := max(postWidth-8, 24)
@@ -307,7 +316,7 @@ func (m Model) renderProfileView() string {
 	}
 
 	var card strings.Builder
-	headerAuthor := renderAuthor(m.profile.Username, false, m.isFollowing(m.profile.ID))
+	headerAuthor := renderAuthor(m.profile.Username, m.profileIsOwn, m.isFollowing(m.profile.ID))
 	displayName := strings.TrimSpace(m.profile.DisplayName)
 	if displayName != "" {
 		headerAuthor += " " + common.MetadataStyle.Render("("+displayName+")")
@@ -338,13 +347,7 @@ func (m Model) renderProfileView() string {
 	if len(m.profilePosts) == 0 {
 		body.WriteString("\n  No posts.\n")
 	} else {
-		start := max(m.profileStart, 0)
-		slots := m.profilePostSlots()
-		end := min(start+slots, len(m.profilePosts))
-		if start > 0 {
-			body.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more posts above") + "\n")
-		}
-		for i := start; i < end; i++ {
+		for i := 0; i < len(m.profilePosts); i++ {
 			p := m.profilePosts[i]
 			author := renderAuthor(p.Username, p.IsOwn, m.isFollowing(p.AccountID))
 			ts := common.TimestampStyle.Render(p.CreatedAt.Format("Jan 02 15:04"))
@@ -378,17 +381,13 @@ func (m Model) renderProfileView() string {
 			}
 			body.WriteString("\n" + item + "\n")
 		}
-		if end < len(m.profilePosts) {
-			body.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Bold(true).Render("▼ more posts below") + "\n")
-		}
 	}
 	body.WriteString("\n\n" + m.helpView())
 	if hasProfilePreview {
-		left := body.String()
+		left := clampLinesToWidth(body.String(), postWidth+8)
 		leftHeight := max(lipgloss.Height(left), 1)
 		preview := clipLines(profilePreviewPanel, leftHeight)
 		previewPane := lipgloss.NewStyle().
-			Width(m.currentPreviewPaneWidth()).
 			MaxHeight(leftHeight).
 			Render(preview)
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", previewPane))
@@ -399,11 +398,8 @@ func (m Model) renderProfileView() string {
 }
 
 func (m Model) renderProfileAvatarPreviewPanel() string {
-	if !m.showMediaPreview {
-		return ""
-	}
 	_, _, tw, th := m.previewSizing(1)
-	avatar := "preview unavailable"
+	avatar := "no avatar URL from API"
 	if strings.TrimSpace(m.profile.AvatarURL) != "" {
 		avatarKey := profileAvatarPreviewKey(m.profile.AvatarURL)
 		avatar = "queued"
@@ -416,13 +412,18 @@ func (m Model) renderProfileAvatarPreviewPanel() string {
 				avatar = p
 			}
 		} else {
-			avatar = m.spinner.View() + " loading..."
+			if p, _, err := loadStaticMediaPreview(m.profile.AvatarURL, max(tw/2, 4), max(th, 2), false); err == nil && p != "" {
+				m.mediaPreview[avatarKey] = p
+				avatar = p
+			} else {
+				avatar = "preview unavailable"
+			}
 		}
 	}
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Bold(true).
-		Render("Profile Image Preview (i: toggle)")
+		Render("Profile Image Preview")
 	body := lipgloss.NewStyle().
 		Width(tw).
 		Height(th).

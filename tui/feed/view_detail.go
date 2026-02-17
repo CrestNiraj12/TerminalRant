@@ -77,6 +77,9 @@ func (m Model) renderDetailView() string {
 		cardContent.WriteString(common.ConfirmStyle.Render(fmt.Sprintf("%s @%s? (y/n)", action, m.followUsername)) + "\n")
 	}
 	cardContent.WriteString(common.TimestampStyle.Render(r.CreatedAt.Format("Monday, Jan 02, 2006 at 15:04")) + "\n")
+	if m.confirmDelete {
+		cardContent.WriteString(common.ConfirmStyle.Render("Delete this post? (y/n)") + "\n")
+	}
 
 	// Parent Context inside card (minimalist)
 	if len(m.ancestors) > 0 {
@@ -194,7 +197,6 @@ func (m Model) renderDetailView() string {
 		leftHeight := max(lipgloss.Height(postBlock), 1)
 		preview := clipLines(panel, leftHeight)
 		previewPane := lipgloss.NewStyle().
-			Width(m.currentPreviewPaneWidth()).
 			MaxHeight(leftHeight).
 			Render(preview)
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, postBlock, "  ", previewPane))

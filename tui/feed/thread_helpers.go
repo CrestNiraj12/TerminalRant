@@ -33,6 +33,20 @@ func (m Model) detailReplyGate() int {
 	return gate
 }
 
+func (m Model) profileScrollGate() int {
+	bio := strings.TrimSpace(m.profile.Bio)
+	bioLines := 0
+	if bio != "" {
+		bioLines = estimateWrappedLines(bio, 66)
+	}
+	// Mirrors detail gate semantics: allow scrolling through the profile
+	// header/card before cursor moves into the post list.
+	mainLines := 16 + bioLines
+	viewHeight := max(m.height-2, 8)
+	gate := max(mainLines-(viewHeight-4), 0)
+	return gate
+}
+
 func estimateWrappedLines(text string, width int) int {
 	if width < 1 {
 		width = 1
