@@ -23,11 +23,11 @@ builds:
 
 archives:
   - id: default
-    builds: [terminalrant]
-    format: tar.gz
+    ids: [terminalrant]
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE*
@@ -45,18 +45,24 @@ release:
   header: "{{ .Env.RELEASE_HEADER }}"
   footer: "{{ .Env.RELEASE_FOOTER }}"
 
-brews:
+homebrew_casks:
   - name: terminalrant
     description: "Rant space for developers who live in terminal"
     homepage: "https://github.com/CrestNiraj12/terminalrant"
-    license: "MIT"
+    binaries:
+      - terminalrant
+    url:
+      verified: "github.com/CrestNiraj12/terminalrant/"
     repository:
       owner: CrestNiraj12
       name: homebrew-terminalrant
-    install: |
-      bin.install "terminalrant"
-    test: |
-      system "#{bin}/terminalrant", "--help"
+    # Remove quarantine attribute since binary isn't signed/notarized
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/terminalrant"]
+          end
 
 scoops:
   - name: terminalrant
