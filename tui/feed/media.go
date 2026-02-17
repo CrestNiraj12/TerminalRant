@@ -10,6 +10,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -21,6 +22,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/CrestNiraj12/terminalrant/domain"
+)
+
+const (
+	previewASCIIWidth  = 17
+	previewASCIIHeight = 14
+	previewTileWidth   = previewASCIIWidth * 2
+	previewTileHeight  = previewASCIIHeight
+	previewPaneWidth   = 72
 )
 
 func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
@@ -49,16 +58,7 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 			continue
 		}
 		m.mediaLoading[baseKey] = true
-		cmds = append(cmds, fetchMediaPreview(target.URL, target.FallbackURL, baseKey, 12, 6, target.Animated))
-	}
-	// For single-image posts, also fetch a higher-resolution preview for better quality.
-	if len(targets) == 1 && !targets[0].Animated {
-		url := targets[0].URL
-		hiKey := mediaPreviewSingleKey(url)
-		if _, ok := m.mediaPreview[hiKey]; !ok && !m.mediaLoading[hiKey] {
-			m.mediaLoading[hiKey] = true
-			cmds = append(cmds, fetchMediaPreview(url, "", hiKey, 24, 12, false))
-		}
+		cmds = append(cmds, fetchMediaPreview(target.URL, target.FallbackURL, baseKey, previewASCIIWidth, previewASCIIHeight, target.Animated))
 	}
 	if len(cmds) == 0 {
 		return nil
@@ -79,6 +79,7 @@ type mediaPreviewTarget struct {
 	URL         string
 	FallbackURL string
 	Animated    bool
+	Description string
 }
 
 func mediaPreviewTargets(media []domain.MediaAttachment) []mediaPreviewTarget {
@@ -107,7 +108,12 @@ func mediaPreviewTargets(media []domain.MediaAttachment) []mediaPreviewTarget {
 				continue
 			}
 			seen[url] = struct{}{}
-			out = append(out, mediaPreviewTarget{URL: url, FallbackURL: fallback, Animated: true})
+			out = append(out, mediaPreviewTarget{
+				URL:         url,
+				FallbackURL: fallback,
+				Animated:    true,
+				Description: strings.TrimSpace(m.Description),
+			})
 			continue
 		case "image":
 			url = strings.TrimSpace(m.PreviewURL)
@@ -125,7 +131,11 @@ func mediaPreviewTargets(media []domain.MediaAttachment) []mediaPreviewTarget {
 			continue
 		}
 		seen[url] = struct{}{}
-		out = append(out, mediaPreviewTarget{URL: url, Animated: animated})
+		out = append(out, mediaPreviewTarget{
+			URL:         url,
+			Animated:    animated,
+			Description: strings.TrimSpace(m.Description),
+		})
 	}
 	return out
 }
@@ -286,10 +296,6 @@ func mediaPreviewBaseKey(url string) string {
 	return "base|" + url
 }
 
-func mediaPreviewSingleKey(url string) string {
-	return "single|" + url
-}
-
 func renderANSIThumbnail(img image.Image, w, h int) string {
 	b := img.Bounds()
 	if b.Dx() <= 0 || b.Dy() <= 0 {
@@ -301,12 +307,32 @@ func renderANSIThumbnail(img image.Image, w, h int) string {
 	if h < 2 {
 		h = 2
 	}
+
+	drawW := w
+	drawH := int(math.Round(float64(b.Dy()) * float64(drawW) / float64(b.Dx())))
+	if drawH > h {
+		drawH = h
+		drawW = int(math.Round(float64(b.Dx()) * float64(drawH) / float64(b.Dy())))
+	}
+	if drawW < 1 {
+		drawW = 1
+	}
+	if drawH < 1 {
+		drawH = 1
+	}
+	offsetX := (w - drawW) / 2
+	offsetY := (h - drawH) / 2
+	bg := color.NRGBA{R: 12, G: 12, B: 12, A: 255}
+
 	var out strings.Builder
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			sx := b.Min.X + x*b.Dx()/w
-			sy := b.Min.Y + y*b.Dy()/h
-			c := color.NRGBAModel.Convert(img.At(sx, sy)).(color.NRGBA)
+			c := bg
+			if x >= offsetX && x < offsetX+drawW && y >= offsetY && y < offsetY+drawH {
+				cx := x - offsetX
+				cy := y - offsetY
+				c = sampleAveragedColor(img, b, cx, cy, drawW, drawH)
+			}
 			fmt.Fprintf(&out, "\x1b[48;2;%d;%d;%dm  \x1b[0m", c.R, c.G, c.B)
 		}
 		if y < h-1 {
@@ -314,4 +340,43 @@ func renderANSIThumbnail(img image.Image, w, h int) string {
 		}
 	}
 	return out.String()
+}
+
+func sampleAveragedColor(img image.Image, b image.Rectangle, cellX, cellY, cellsW, cellsH int) color.NRGBA {
+	if cellsW <= 0 || cellsH <= 0 {
+		return color.NRGBA{}
+	}
+	fx0 := float64(cellX) / float64(cellsW)
+	fx1 := float64(cellX+1) / float64(cellsW)
+	fy0 := float64(cellY) / float64(cellsH)
+	fy1 := float64(cellY+1) / float64(cellsH)
+
+	points := [4][2]float64{
+		{fx0*0.75 + fx1*0.25, fy0*0.75 + fy1*0.25},
+		{fx0*0.25 + fx1*0.75, fy0*0.75 + fy1*0.25},
+		{fx0*0.75 + fx1*0.25, fy0*0.25 + fy1*0.75},
+		{fx0*0.25 + fx1*0.75, fy0*0.25 + fy1*0.75},
+	}
+
+	var sumR, sumG, sumB int
+	for _, p := range points {
+		sx := b.Min.X + int(p[0]*float64(b.Dx()))
+		sy := b.Min.Y + int(p[1]*float64(b.Dy()))
+		if sx >= b.Max.X {
+			sx = b.Max.X - 1
+		}
+		if sy >= b.Max.Y {
+			sy = b.Max.Y - 1
+		}
+		c := color.NRGBAModel.Convert(img.At(sx, sy)).(color.NRGBA)
+		sumR += int(c.R)
+		sumG += int(c.G)
+		sumB += int(c.B)
+	}
+	return color.NRGBA{
+		R: uint8(sumR / len(points)),
+		G: uint8(sumG / len(points)),
+		B: uint8(sumB / len(points)),
+		A: 255,
+	}
 }

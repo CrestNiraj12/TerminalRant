@@ -10,7 +10,7 @@ import (
 	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
-func TestRenderSelectedMediaPreviewPanel_GridModes(t *testing.T) {
+func TestRenderSelectedMediaPreviewPanel_FeedShowsSinglePreviewWithCount(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.showMediaPreview = true
 	m.rants = []RantItem{{
@@ -19,7 +19,7 @@ func TestRenderSelectedMediaPreviewPanel_GridModes(t *testing.T) {
 			Content:   "media",
 			CreatedAt: time.Now(),
 			Media: []domain.MediaAttachment{
-				{Type: "image", PreviewURL: "u1"},
+				{Type: "image", PreviewURL: "u1", Description: "first alt text for image one"},
 				{Type: "image", PreviewURL: "u2"},
 				{Type: "image", PreviewURL: "u3"},
 				{Type: "image", PreviewURL: "u4"},
@@ -35,12 +35,60 @@ func TestRenderSelectedMediaPreviewPanel_GridModes(t *testing.T) {
 	m.mediaPreview[mediaPreviewBaseKey("u5")] = "p5"
 
 	panel := m.renderSelectedMediaPreviewPanel()
-	if !strings.Contains(panel, "+1 more") {
-		t.Fatalf("expected overflow indicator in panel: %q", panel)
+	if !strings.Contains(panel, "p1") {
+		t.Fatalf("expected first preview in feed panel: %q", panel)
+	}
+	if strings.Contains(panel, "p2") {
+		t.Fatalf("expected only one preview in feed panel: %q", panel)
+	}
+	if !strings.Contains(panel, "+4") {
+		t.Fatalf("expected remaining media count in panel: %q", panel)
+	}
+	if !strings.Contains(panel, "alt:") {
+		t.Fatalf("expected alt text above feed preview: %q", panel)
 	}
 }
 
-func TestRenderSelectedMediaPreviewPanel_SingleUsesHighResolutionPreview(t *testing.T) {
+func TestRenderSelectedMediaPreviewPanel_DetailShowsAllPreviews(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.showMediaPreview = true
+	m.showDetail = true
+	m.rants = []RantItem{{
+		Rant: domain.Rant{
+			ID:        "p1",
+			Content:   "media",
+			CreatedAt: time.Now(),
+			Media: []domain.MediaAttachment{
+				{Type: "image", PreviewURL: "u1", Description: "first detailed alt"},
+				{Type: "image", PreviewURL: "u2"},
+				{Type: "image", PreviewURL: "u3"},
+				{Type: "image", PreviewURL: "u4"},
+				{Type: "image", PreviewURL: "u5"},
+			},
+		},
+	}}
+	m.cursor = 0
+	m.mediaPreview[mediaPreviewBaseKey("u1")] = "p1"
+	m.mediaPreview[mediaPreviewBaseKey("u2")] = "p2"
+	m.mediaPreview[mediaPreviewBaseKey("u3")] = "p3"
+	m.mediaPreview[mediaPreviewBaseKey("u4")] = "p4"
+	m.mediaPreview[mediaPreviewBaseKey("u5")] = "p5"
+
+	panel := m.renderSelectedMediaPreviewPanel()
+	for _, p := range []string{"p1", "p2", "p3", "p4", "p5"} {
+		if !strings.Contains(panel, p) {
+			t.Fatalf("expected detail panel to include %s: %q", p, panel)
+		}
+	}
+	if strings.Contains(panel, "+") {
+		t.Fatalf("expected no feed overflow marker in detail panel: %q", panel)
+	}
+	if !strings.Contains(panel, "alt:") {
+		t.Fatalf("expected alt labels above detail previews: %q", panel)
+	}
+}
+
+func TestRenderSelectedMediaPreviewPanel_SingleUsesBasePreview(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.showMediaPreview = true
 	m.rants = []RantItem{{
@@ -52,19 +100,15 @@ func TestRenderSelectedMediaPreviewPanel_SingleUsesHighResolutionPreview(t *test
 		},
 	}}
 	m.cursor = 0
-	m.mediaPreview[mediaPreviewBaseKey("u1")] = "LOW_PREVIEW"
-	m.mediaPreview[mediaPreviewSingleKey("u1")] = "HIGH_PREVIEW"
+	m.mediaPreview[mediaPreviewBaseKey("u1")] = "BASE_PREVIEW"
 
 	panel := m.renderSelectedMediaPreviewPanel()
-	if !strings.Contains(panel, "HIGH_PREVIEW") {
-		t.Fatalf("expected high-resolution preview in single-image panel")
-	}
-	if strings.Contains(panel, "LOW_PREVIEW") {
-		t.Fatalf("expected base preview to be replaced when high-resolution is ready")
+	if !strings.Contains(panel, "BASE_PREVIEW") {
+		t.Fatalf("expected base preview in single-image panel")
 	}
 }
 
-func TestEnsureMediaPreviewCmd_SingleImageQueuesHighAndBase(t *testing.T) {
+func TestEnsureMediaPreviewCmd_SingleImageQueuesBaseOnly(t *testing.T) {
 	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
 	m.showMediaPreview = true
 	m.rants = []RantItem{{
@@ -84,8 +128,8 @@ func TestEnsureMediaPreviewCmd_SingleImageQueuesHighAndBase(t *testing.T) {
 	if !m.mediaLoading[mediaPreviewBaseKey("u1")] {
 		t.Fatalf("expected base preview request queued")
 	}
-	if !m.mediaLoading[mediaPreviewSingleKey("u1")] {
-		t.Fatalf("expected single-image high-resolution request queued")
+	if len(m.mediaLoading) != 1 {
+		t.Fatalf("expected exactly one preview request queued, got %d", len(m.mediaLoading))
 	}
 }
 
@@ -96,6 +140,20 @@ func TestRenderMediaDetail_RendersItems(t *testing.T) {
 	})
 	if !strings.Contains(out, "Media (2)") || !strings.Contains(out, "image 10x20") || !strings.Contains(out, "video 30x40") {
 		t.Fatalf("unexpected media detail rendering: %q", out)
+	}
+	if strings.Contains(out, "desc") {
+		t.Fatalf("expected alt description to be omitted from media info list: %q", out)
+	}
+}
+
+func TestWrapAndTruncate_LimitsToThreeLines(t *testing.T) {
+	text := "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen"
+	lines := wrapAndTruncate(text, 10, 3)
+	if len(lines) != 3 {
+		t.Fatalf("expected exactly three lines, got %d", len(lines))
+	}
+	if !strings.HasSuffix(lines[2], "...") {
+		t.Fatalf("expected truncated final line with ellipsis: %#v", lines)
 	}
 }
 
@@ -120,6 +178,21 @@ func TestRenderANSIThumbnail_HighResolutionSamplesMorePixels(t *testing.T) {
 	}
 	if highPixels <= basePixels {
 		t.Fatalf("expected high-resolution preview to sample more pixels (%d <= %d)", highPixels, basePixels)
+	}
+}
+
+func TestRenderANSIThumbnail_PreservesAspectRatioInsideFixedBounds(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 16)) // 4:1 landscape
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 64; x++ {
+			img.Set(x, y, color.NRGBA{R: 220, G: 80, B: 20, A: 255})
+		}
+	}
+
+	thumb := renderANSIThumbnail(img, 12, 8)
+	bgPixels := strings.Count(thumb, "\x1b[48;2;12;12;12m")
+	if bgPixels == 0 {
+		t.Fatalf("expected letterboxing background pixels for preserved aspect ratio")
 	}
 }
 

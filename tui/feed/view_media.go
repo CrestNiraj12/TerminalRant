@@ -43,20 +43,6 @@ func renderMediaCompact(media []domain.MediaAttachment) string {
 		parts = append(parts, fmt.Sprintf("📎 %d", otherCount))
 	}
 	line := strings.Join(parts, "  ")
-	firstAlt := ""
-	for _, m := range media {
-		if strings.TrimSpace(m.Description) != "" {
-			firstAlt = m.Description
-			break
-		}
-	}
-	if firstAlt != "" {
-		r := []rune(firstAlt)
-		if len(r) > 40 {
-			firstAlt = string(r[:40]) + "..."
-		}
-		line += "  alt: " + firstAlt
-	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Faint(true).
@@ -79,9 +65,6 @@ func renderMediaDetail(media []domain.MediaAttachment) string {
 		if m.Width > 0 && m.Height > 0 {
 			entry += fmt.Sprintf(" %dx%d", m.Width, m.Height)
 		}
-		if strings.TrimSpace(m.Description) != "" {
-			entry += " — " + m.Description
-		}
 		if m.URL != "" {
 			entry += " [" + m.URL + "]"
 		}
@@ -91,6 +74,76 @@ func renderMediaDetail(media []domain.MediaAttachment) string {
 		}
 	}
 	return b.String()
+}
+
+func wrapAndTruncate(text string, width int, maxLines int) []string {
+	if width < 8 {
+		width = 8
+	}
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) == 0 {
+		return []string{""}
+	}
+	lines := make([]string, 0, maxLines)
+	line := ""
+	consume := func() {
+		if line != "" {
+			lines = append(lines, line)
+			line = ""
+		}
+	}
+	for _, word := range words {
+		w := []rune(word)
+		if len(w) > width {
+			if line != "" {
+				consume()
+				if len(lines) == maxLines {
+					break
+				}
+			}
+			for len(w) > width {
+				lines = append(lines, string(w[:width]))
+				w = w[width:]
+				if len(lines) == maxLines {
+					break
+				}
+			}
+			if len(lines) == maxLines {
+				break
+			}
+			line = string(w)
+			continue
+		}
+		if line == "" {
+			line = word
+			continue
+		}
+		if len([]rune(line))+1+len([]rune(word)) <= width {
+			line += " " + word
+			continue
+		}
+		consume()
+		if len(lines) == maxLines {
+			break
+		}
+		line = word
+	}
+	if len(lines) < maxLines && line != "" {
+		lines = append(lines, line)
+	}
+	full := strings.Join(words, " ")
+	visible := strings.Join(lines, " ")
+	if len([]rune(visible)) < len([]rune(full)) && len(lines) > 0 {
+		last := []rune(lines[len(lines)-1])
+		if len(last) > width-3 {
+			last = last[:max(width-3, 0)]
+		}
+		lines[len(lines)-1] = strings.TrimSpace(string(last) + "...")
+	}
+	return lines
 }
 
 func (m Model) renderSelectedMediaPreviewPanel() string {
@@ -105,18 +158,37 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 			r = m.rants[m.cursor].Rant
 		}
 	}
-	urls := mediaPreviewURLs(r.Media)
-	if len(urls) == 0 {
+	targets := mediaPreviewTargets(r.Media)
+	if len(targets) == 0 {
 		return ""
 	}
 	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Bold(true).
 		Render("Media Preview (i: toggle, I: open all)")
-	maxTiles := min(len(urls), 4)
-	tiles := make([]string, 0, maxTiles)
-	renderTile := func(i int, width int, showLabel bool) string {
-		url := urls[i]
+	displayTargets := targets
+	if !m.showDetail && len(displayTargets) > 1 {
+		displayTargets = displayTargets[:1]
+	}
+	tiles := make([]string, 0, len(displayTargets))
+	renderAlt := func(desc string) string {
+		desc = strings.TrimSpace(desc)
+		if desc == "" {
+			desc = "(no alt)"
+		}
+		lines := wrapAndTruncate(desc, previewTileWidth, 3)
+		if len(lines) < 2 {
+			lines = append(lines, "")
+		}
+		return lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8E8E8E")).
+			Faint(true).
+			Width(previewTileWidth).
+			Render("alt: " + strings.Join(lines, "\n"))
+	}
+	renderTile := func(i int) string {
+		target := displayTargets[i]
+		url := target.URL
 		baseKey := mediaPreviewBaseKey(url)
 		content := "queued"
 		if m.mediaLoading[baseKey] {
@@ -128,75 +200,64 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 				content = preview
 			}
 		}
-		text := content
-		if showLabel {
-			text = lipgloss.NewStyle().Foreground(lipgloss.Color("#7A7A7A")).Render(fmt.Sprintf("[%d]", i+1)) + "\n" + content
-		}
-		return lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#475E73")).
-			Width(width).
-			Padding(0, 1).
-			Render(text)
+		tile := lipgloss.NewStyle().
+			Width(previewTileWidth).
+			Height(previewTileHeight).
+			AlignHorizontal(lipgloss.Center).
+			AlignVertical(lipgloss.Center).
+			Padding(0, 0).
+			Render(content)
+		return renderAlt(target.Description) + "\n" + tile
 	}
 
 	body := ""
-	switch maxTiles {
+	columnGap := " "
+	rowGap := "\n"
+	if m.showDetail {
+		columnGap = "   "
+		rowGap = "\n\n"
+	}
+	switch len(displayTargets) {
 	case 1:
-		// Single image: fill the whole preview area (2x2-equivalent footprint).
-		url := urls[0]
-		baseKey := mediaPreviewBaseKey(url)
-		singleKey := mediaPreviewSingleKey(url)
-		content := "queued"
-		if preview, ok := m.mediaPreview[singleKey]; ok && preview != "" {
-			content = preview
-		} else if m.mediaLoading[singleKey] {
-			// While high-res is loading, show base preview if available.
-			if basePreview, ok := m.mediaPreview[baseKey]; ok && basePreview != "" {
-				content = basePreview + "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#7A7A7A")).Render("enhancing...")
-			} else {
-				content = m.spinner.View() + " loading..."
-			}
-		} else if m.mediaLoading[baseKey] {
-			content = m.spinner.View() + " loading..."
-		} else if preview, ok := m.mediaPreview[baseKey]; ok {
-			if preview == "" {
-				content = "preview unavailable"
-			} else {
-				content = preview
-			}
+		body = renderTile(0)
+		if !m.showDetail && len(targets) > 1 {
+			more := lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#8E8E8E")).
+				Bold(true).
+				Width(4).
+				Height(previewTileHeight).
+				AlignVertical(lipgloss.Center).
+				Render(fmt.Sprintf("+%d", len(targets)-1))
+			body = lipgloss.JoinHorizontal(lipgloss.Top, body, " ", more)
 		}
-		body = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#475E73")).
-			Width(49).
-			Padding(0, 1).
-			Render(content)
 	case 2:
 		// Two images: 1x2 layout.
-		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true))
-		body = lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
+		tiles = append(tiles, renderTile(0), renderTile(1))
+		body = lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], columnGap, tiles[1])
 	case 3:
 		// 2x2 grid with one empty cell.
-		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true), renderTile(2, 24, true))
-		top := lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
+		tiles = append(tiles, renderTile(0), renderTile(1), renderTile(2))
+		top := lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], columnGap, tiles[1])
 		bottom := tiles[2]
-		body = top + "\n" + bottom
+		body = top + rowGap + bottom
 	default:
-		// 4+ images: 2x2 grid + overflow indicator.
-		tiles = append(tiles, renderTile(0, 24, true), renderTile(1, 24, true), renderTile(2, 24, true), renderTile(3, 24, true))
-		top := lipgloss.JoinHorizontal(lipgloss.Top, tiles[0], " ", tiles[1])
-		bottom := lipgloss.JoinHorizontal(lipgloss.Top, tiles[2], " ", tiles[3])
-		body = top + "\n" + bottom
+		// 4+ images: render all previews as 2-column rows.
+		for i := 0; i < len(displayTargets); i += 2 {
+			if i+1 < len(displayTargets) {
+				row := lipgloss.JoinHorizontal(lipgloss.Top, renderTile(i), columnGap, renderTile(i+1))
+				if body == "" {
+					body = row
+				} else {
+					body += rowGap + row
+				}
+			} else {
+				if body == "" {
+					body = renderTile(i)
+				} else {
+					body += rowGap + renderTile(i)
+				}
+			}
+		}
 	}
-	if len(urls) > 4 {
-		body += "\n" + lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8E8E8E")).
-			Render(fmt.Sprintf("+%d more", len(urls)-4))
-	}
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A4E63")).
-		Padding(0, 1).
-		Render(header + "\n" + body)
+	return header + "\n\n" + body
 }
