@@ -22,10 +22,10 @@ func (m Model) renderDetailView() string {
 		status = StatusNormal // Focused rants from thread are usually normal
 		err = nil
 	}
-	selectedForPreview := m.getSelectedRant()
-	hasPreviewPanel := m.showMediaPreview && len(mediaPreviewTargets(selectedForPreview.Media)) > 0
 	postWidth := 74
-	if !m.showMediaPreview || hasPreviewPanel {
+	// Keep detail post width stable regardless of which item is selected.
+	// Otherwise selecting replies with/without media causes width jumps.
+	if m.showMediaPreview {
 		postWidth = m.currentPostPaneWidth()
 		if postWidth < 52 {
 			postWidth = 52

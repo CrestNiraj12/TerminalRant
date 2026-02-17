@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/CrestNiraj12/terminalrant/domain"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestRenderDetailView_ContainsThreadAndMediaSections(t *testing.T) {
@@ -142,5 +143,51 @@ func TestRenderProfileView_RendersPostsRegardlessOfProfileStart(t *testing.T) {
 	out := m.renderProfileView()
 	if !strings.Contains(out, "still visible post") {
 		t.Fatalf("expected profile post to render independent of profileStart")
+	}
+}
+
+func TestRenderDetailView_MainCardWidthStableAcrossSelection(t *testing.T) {
+	m := New(stubTimeline{}, stubAccount{}, "terminalrant", "terminalrant")
+	m.width = 140
+	m.height = 50
+	m.showDetail = true
+	m.showMediaPreview = true
+	m.rants = []RantItem{{Rant: domain.Rant{
+		ID:        "root",
+		AccountID: "acct-a",
+		Author:    "Alice",
+		Username:  "alice",
+		Content:   "root content",
+		CreatedAt: time.Now(),
+		Media:     []domain.MediaAttachment{{Type: "image", PreviewURL: "u1"}},
+	}, Status: StatusNormal}}
+	m.cursor = 0
+	m.replies = []domain.Rant{{
+		ID:        "r1",
+		AccountID: "acct-b",
+		Author:    "Bob",
+		Username:  "bob",
+		Content:   "reply without media",
+		CreatedAt: time.Now(),
+	}}
+
+	cardBorderWidth := func(out string) int {
+		for _, ln := range strings.Split(out, "\n") {
+			if strings.Contains(ln, "╭") && strings.Contains(ln, "╮") {
+				return ansi.StringWidth(ln)
+			}
+		}
+		return 0
+	}
+
+	m.detailCursor = 0
+	wMain := cardBorderWidth(m.renderDetailView())
+	m.detailCursor = 1
+	wReply := cardBorderWidth(m.renderDetailView())
+	if wMain == 0 || wReply == 0 {
+		t.Fatalf("failed to detect detail card border widths: main=%d reply=%d", wMain, wReply)
+	}
+	if wMain != wReply {
+		t.Fatalf("detail main card width changed with selection: main=%d reply=%d", wMain, wReply)
 	}
 }
