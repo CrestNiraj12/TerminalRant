@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.3.1] - 2026-02-17
+
+### Added
+
+- Profile view: avatar preview and inline editing via compose pane
+- Feed: open profile URLs, delete rants from detail view, WebP image support
+- Media previews: alt text, improved thumbnails (aspect ratio + sampling)
+
+### Fixed
+
+- Prevent detail view layout jumps when selecting replies with/without media
+- Fix media module import typo (missing quote)
+
+### Changed
+
+- Homebrew install docs now use macOS Cask
+- Installer pinned version bumped to v0.3.0
+
 ## [v0.3.0] - 2026-02-17
 
 ### Changed
