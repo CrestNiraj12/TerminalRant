@@ -18,6 +18,7 @@ func (m Model) helpView() string {
 		items = []string{
 			"j/k: focus",
 			"enter: open",
+			"v/V: edit profile",
 			"f: follow",
 			"B: blocked",
 			"esc/q: back",
@@ -75,6 +76,7 @@ func (m Model) renderKeyDialog() string {
 		includeMove = true
 		core = []string{
 			"enter           open selected post detail",
+			"v / V           edit profile via editor / inline",
 			"f               follow/unfollow profile owner",
 			"B               show blocked users",
 			"esc / q         back",
@@ -283,21 +285,32 @@ func (m Model) renderProfileView() string {
 		b.WriteString("\n\n" + m.helpView())
 		return b.String()
 	}
+	profilePreviewPanel := m.renderProfileAvatarPreviewPanel()
+	hasProfilePreview := m.showMediaPreview
+	postWidth := 74
+	if hasProfilePreview {
+		postWidth = m.currentPostPaneWidth()
+		if postWidth < 52 {
+			postWidth = 52
+		}
+	}
+	contentWidth := max(postWidth-8, 24)
 
 	cardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#45475A")).
 		Padding(1, 2).
 		MarginLeft(2).
-		Width(74)
+		Width(postWidth)
 	if m.profileCursor == 0 {
 		cardStyle = cardStyle.BorderForeground(lipgloss.Color("#FF8700"))
 	}
 
 	var card strings.Builder
 	headerAuthor := renderAuthor(m.profile.Username, false, m.isFollowing(m.profile.ID))
-	if strings.TrimSpace(m.profile.DisplayName) != "" {
-		headerAuthor += " " + common.MetadataStyle.Render("("+m.profile.DisplayName+")")
+	displayName := strings.TrimSpace(m.profile.DisplayName)
+	if displayName != "" {
+		headerAuthor += " " + common.MetadataStyle.Render("("+displayName+")")
 	}
 	card.WriteString(headerAuthor + "\n")
 	card.WriteString(common.MetadataStyle.Render(
@@ -316,19 +329,20 @@ func (m Model) renderProfileView() string {
 		card.WriteString("\n")
 	}
 	if strings.TrimSpace(m.profile.Bio) != "" {
-		card.WriteString(common.ContentStyle.Width(66).Render(m.profile.Bio) + "\n")
+		card.WriteString(common.ContentStyle.Width(contentWidth).Render(m.profile.Bio) + "\n")
 	}
-	b.WriteString(cardStyle.Render(card.String()))
+	var body strings.Builder
+	body.WriteString(cardStyle.Render(card.String()))
 
-	b.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Posts") + "\n")
+	body.WriteString("\n\n  " + lipgloss.NewStyle().Bold(true).Underline(true).Render("Posts") + "\n")
 	if len(m.profilePosts) == 0 {
-		b.WriteString("\n  No posts.\n")
+		body.WriteString("\n  No posts.\n")
 	} else {
 		start := max(m.profileStart, 0)
 		slots := m.profilePostSlots()
 		end := min(start+slots, len(m.profilePosts))
 		if start > 0 {
-			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more posts above") + "\n")
+			body.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB454")).Bold(true).Render("▲ more posts above") + "\n")
 		}
 		for i := start; i < end; i++ {
 			p := m.profilePosts[i]
@@ -342,11 +356,11 @@ func (m Model) renderProfileView() string {
 			if content == "" {
 				content = "(empty)"
 			}
-			lines := strings.Split(truncateToTwoLines(content, 56), "\n")
+			lines := strings.Split(truncateToTwoLines(content, max(contentWidth-10, 20)), "\n")
 			indicator := lipgloss.NewStyle().Foreground(lipgloss.Color("#444444")).Render("┃ ")
-			var body strings.Builder
+			var postBody strings.Builder
 			for _, ln := range lines {
-				body.WriteString("  " + indicator + common.ContentStyle.Render(ln) + "\n")
+				postBody.WriteString("  " + indicator + common.ContentStyle.Render(ln) + "\n")
 			}
 			likeIcon := "♡"
 			likeStyle := common.MetadataStyle
@@ -355,16 +369,65 @@ func (m Model) renderProfileView() string {
 				likeStyle = common.LikeActiveStyle
 			}
 			meta := fmt.Sprintf("%s %d  ↩ %d", likeStyle.Render(likeIcon), p.LikesCount, p.RepliesCount)
-			item := fmt.Sprintf("  %s %s\n%s  %s", author, ts, strings.TrimSuffix(body.String(), "\n"), common.MetadataStyle.Render(meta))
+			item := fmt.Sprintf("  %s %s\n%s  %s", author, ts, strings.TrimSuffix(postBody.String(), "\n"), common.MetadataStyle.Render(meta))
+			if mediaLine := renderMediaCompact(p.Media); mediaLine != "" {
+				item += "\n  " + mediaLine
+			}
 			if m.profileCursor == i+1 {
 				item = lipgloss.NewStyle().Background(lipgloss.Color("#333333")).Foreground(lipgloss.Color("#FFFFFF")).Render(item)
 			}
-			b.WriteString("\n" + item + "\n")
+			body.WriteString("\n" + item + "\n")
 		}
 		if end < len(m.profilePosts) {
-			b.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Bold(true).Render("▼ more posts below") + "\n")
+			body.WriteString("  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5CA")).Bold(true).Render("▼ more posts below") + "\n")
 		}
 	}
-	b.WriteString("\n\n" + m.helpView())
+	body.WriteString("\n\n" + m.helpView())
+	if hasProfilePreview {
+		left := body.String()
+		leftHeight := max(lipgloss.Height(left), 1)
+		preview := clipLines(profilePreviewPanel, leftHeight)
+		previewPane := lipgloss.NewStyle().
+			Width(m.currentPreviewPaneWidth()).
+			MaxHeight(leftHeight).
+			Render(preview)
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", previewPane))
+	} else {
+		b.WriteString(body.String())
+	}
 	return m.renderDetailViewport(b.String())
+}
+
+func (m Model) renderProfileAvatarPreviewPanel() string {
+	if !m.showMediaPreview {
+		return ""
+	}
+	_, _, tw, th := m.previewSizing(1)
+	avatar := "preview unavailable"
+	if strings.TrimSpace(m.profile.AvatarURL) != "" {
+		avatarKey := profileAvatarPreviewKey(m.profile.AvatarURL)
+		avatar = "queued"
+		if m.mediaLoading[avatarKey] {
+			avatar = m.spinner.View() + " loading..."
+		} else if p, ok := m.mediaPreview[avatarKey]; ok {
+			if p == "" {
+				avatar = "preview unavailable"
+			} else {
+				avatar = p
+			}
+		} else {
+			avatar = m.spinner.View() + " loading..."
+		}
+	}
+	header := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6FA8DC")).
+		Bold(true).
+		Render("Profile Image Preview (i: toggle)")
+	body := lipgloss.NewStyle().
+		Width(tw).
+		Height(th).
+		AlignHorizontal(lipgloss.Center).
+		AlignVertical(lipgloss.Center).
+		Render(avatar)
+	return header + "\n\n" + body
 }

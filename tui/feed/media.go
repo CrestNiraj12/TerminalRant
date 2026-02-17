@@ -25,16 +25,100 @@ import (
 )
 
 const (
-	previewASCIIWidth  = 17
-	previewASCIIHeight = 14
+	previewMinASCIIWidth  = 17
+	previewMinASCIIHeight = 14
+	previewMaxASCIIWidth  = 40
+	previewMaxASCIIHeight = 30
 	previewTileWidth   = previewASCIIWidth * 2
 	previewTileHeight  = previewASCIIHeight
-	previewPaneWidth   = 72
+	previewPaneMaxWidth = 110
 )
+
+const (
+	previewASCIIWidth  = previewMinASCIIWidth
+	previewASCIIHeight = previewMinASCIIHeight
+)
+
+func (m Model) currentPreviewPaneWidth() int {
+	if m.width <= 0 {
+		return 40
+	}
+	_, preview := m.splitPaneWidths()
+	return preview
+}
+
+func (m Model) currentPostPaneWidth() int {
+	if m.width <= 0 {
+		return 40
+	}
+	post, _ := m.splitPaneWidths()
+	return post
+}
+
+func (m Model) splitPaneWidths() (post, preview int) {
+	total := m.width - 4 // safety/gutter
+	if total < 40 {
+		total = 40
+	}
+	usable := total - 2 // gap between panes
+	if usable < 20 {
+		usable = 20
+	}
+	preview = usable / 2
+	post = usable - preview
+	if preview > previewPaneMaxWidth {
+		preview = previewPaneMaxWidth
+		post = usable - preview
+	}
+	return post, preview
+}
+
+func (m Model) previewSizing(total int) (asciiW, asciiH, tileW, tileH int) {
+	paneW := m.currentPreviewPaneWidth()
+	cols := 1
+	columnGap := 1
+	if m.showDetail {
+		columnGap = 3
+		if total >= 2 {
+			cols = 2
+		}
+	}
+	usable := paneW
+	if !m.showDetail && total > 1 {
+		usable -= 5 // reserve for +N label on the right
+	}
+	if usable < previewTileWidth {
+		usable = previewTileWidth
+	}
+	tileW = usable
+	if cols == 2 {
+		candidate := (usable - columnGap) / 2
+		if candidate >= previewTileWidth {
+			tileW = candidate
+		}
+	}
+	asciiW = max(tileW/2, previewMinASCIIWidth)
+	if asciiW > previewMaxASCIIWidth {
+		asciiW = previewMaxASCIIWidth
+	}
+	asciiH = int(math.Round(float64(asciiW) * 0.82))
+	if asciiH < previewMinASCIIHeight {
+		asciiH = previewMinASCIIHeight
+	}
+	if asciiH > previewMaxASCIIHeight {
+		asciiH = previewMaxASCIIHeight
+	}
+	tileW = asciiW * 2
+	tileH = asciiH
+	return asciiW, asciiH, tileW, tileH
+}
 
 func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 	if !m.showMediaPreview {
 		return nil
+	}
+	if m.showProfile {
+		return m.ensureProfileAvatarPreviewCmd()
 	}
 	r := m.getSelectedRant()
 	if m.showDetail {
@@ -49,6 +133,7 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 		return nil
 	}
 	cmds := make([]tea.Cmd, 0, len(targets))
+	asciiW, asciiH, _, _ := m.previewSizing(len(targets))
 	for _, target := range targets {
 		baseKey := mediaPreviewBaseKey(target.URL)
 		if _, ok := m.mediaPreview[baseKey]; ok {
@@ -58,12 +143,25 @@ func (m *Model) ensureMediaPreviewCmd() tea.Cmd {
 			continue
 		}
 		m.mediaLoading[baseKey] = true
-		cmds = append(cmds, fetchMediaPreview(target.URL, target.FallbackURL, baseKey, previewASCIIWidth, previewASCIIHeight, target.Animated))
+		cmds = append(cmds, fetchMediaPreview(target.URL, target.FallbackURL, baseKey, asciiW, asciiH, target.Animated))
 	}
 	if len(cmds) == 0 {
 		return nil
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *Model) ensureProfileAvatarPreviewCmd() tea.Cmd {
+	if strings.TrimSpace(m.profile.AvatarURL) == "" {
+		return nil
+	}
+	asciiW, asciiH, _, _ := m.previewSizing(1)
+	key := profileAvatarPreviewKey(m.profile.AvatarURL)
+	if _, ok := m.mediaPreview[key]; ok || m.mediaLoading[key] {
+		return nil
+	}
+	m.mediaLoading[key] = true
+	return fetchMediaPreview(m.profile.AvatarURL, "", key, asciiW, asciiH, false)
 }
 
 func mediaPreviewURLs(media []domain.MediaAttachment) []string {
@@ -294,6 +392,10 @@ func mediaOpenURLs(media []domain.MediaAttachment) []string {
 
 func mediaPreviewBaseKey(url string) string {
 	return "base|" + url
+}
+
+func profileAvatarPreviewKey(url string) string {
+	return "profile-avatar|" + url
 }
 
 func renderANSIThumbnail(img image.Image, w, h int) string {

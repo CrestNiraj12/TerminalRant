@@ -22,6 +22,16 @@ func (m Model) renderDetailView() string {
 		status = StatusNormal // Focused rants from thread are usually normal
 		err = nil
 	}
+	selectedForPreview := m.getSelectedRant()
+	hasPreviewPanel := m.showMediaPreview && len(mediaPreviewTargets(selectedForPreview.Media)) > 0
+	postWidth := 74
+	if !m.showMediaPreview || hasPreviewPanel {
+		postWidth = m.currentPostPaneWidth()
+		if postWidth < 52 {
+			postWidth = 52
+		}
+	}
+	contentWidth := max(postWidth-8, 24)
 
 	var b strings.Builder
 
@@ -51,7 +61,7 @@ func (m Model) renderDetailView() string {
 		BorderForeground(lipgloss.Color("#FF8700")).
 		Padding(1, 2).
 		MarginLeft(2).
-		Width(74)
+		Width(postWidth)
 
 	var cardContent strings.Builder
 	headerAuthor := renderAuthor(r.Username, r.IsOwn, m.isFollowing(r.AccountID))
@@ -84,7 +94,7 @@ func (m Model) renderDetailView() string {
 	if strings.TrimSpace(displayContent) == "" && len(r.Media) > 0 {
 		displayContent = "(media post)"
 	}
-	content := common.ContentStyle.Width(66).Render(displayContent)
+	content := common.ContentStyle.Width(contentWidth).Render(displayContent)
 	cardContent.WriteString(content + "\n\n")
 	if len(tags) > 0 {
 		cardContent.WriteString(renderAllTags(tags) + "\n\n")
@@ -163,14 +173,14 @@ func (m Model) renderDetailView() string {
 		if strings.TrimSpace(parentContent) == "" && len(parent.Media) > 0 {
 			parentContent = "(media post)"
 		}
-		parentSummary := truncateToTwoLines(parentContent, 66)
+		parentSummary := truncateToTwoLines(parentContent, contentWidth)
 
 		parentCard := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#333333")).
 			Padding(0, 1). // Use 0 padding on top/bottom to keep it compact
 			MarginLeft(2).
-			Width(74).
+			Width(postWidth).
 			Render(fmt.Sprintf("%s %s\n%s",
 				renderAuthor(parent.Username, parent.IsOwn, m.isFollowing(parent.AccountID)),
 				common.TimestampStyle.Render(parent.CreatedAt.Format("Jan 02")),
@@ -184,7 +194,7 @@ func (m Model) renderDetailView() string {
 		leftHeight := max(lipgloss.Height(postBlock), 1)
 		preview := clipLines(panel, leftHeight)
 		previewPane := lipgloss.NewStyle().
-			Width(previewPaneWidth).
+			Width(m.currentPreviewPaneWidth()).
 			MaxHeight(leftHeight).
 			Render(preview)
 		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, postBlock, "  ", previewPane))
@@ -242,9 +252,11 @@ func (m Model) renderDetailView() string {
 			}
 			meta := fmt.Sprintf("%s %d  ↩ %d",
 				likeStyle.Render(likeIcon), r.LikesCount, r.RepliesCount)
-
 			replyContent := fmt.Sprintf("  %s%s %s\n%s\n  %s%s",
 				indentPrefix, author, timestamp, strings.TrimSuffix(replyBody.String(), "\n"), indentPrefix, common.MetadataStyle.Render(meta))
+			if mediaLine := renderMediaCompact(r.Media); mediaLine != "" {
+				replyContent += "\n  " + indentPrefix + mediaLine
+			}
 
 			if m.detailCursor == i+1 {
 				replyContent = lipgloss.NewStyle().

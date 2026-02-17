@@ -166,6 +166,7 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 		Foreground(lipgloss.Color("#6FA8DC")).
 		Bold(true).
 		Render("Media Preview (i: toggle, I: open all)")
+	_, _, tileW, tileH := m.previewSizing(len(targets))
 	displayTargets := targets
 	if !m.showDetail && len(displayTargets) > 1 {
 		displayTargets = displayTargets[:1]
@@ -176,14 +177,14 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 		if desc == "" {
 			desc = "(no alt)"
 		}
-		lines := wrapAndTruncate(desc, previewTileWidth, 3)
+		lines := wrapAndTruncate(desc, tileW, 3)
 		if len(lines) < 2 {
 			lines = append(lines, "")
 		}
 		return lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8E8E8E")).
 			Faint(true).
-			Width(previewTileWidth).
+			Width(tileW).
 			Render("alt: " + strings.Join(lines, "\n"))
 	}
 	renderTile := func(i int) string {
@@ -201,8 +202,8 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 			}
 		}
 		tile := lipgloss.NewStyle().
-			Width(previewTileWidth).
-			Height(previewTileHeight).
+			Width(tileW).
+			Height(tileH).
 			AlignHorizontal(lipgloss.Center).
 			AlignVertical(lipgloss.Center).
 			Padding(0, 0).
@@ -225,7 +226,7 @@ func (m Model) renderSelectedMediaPreviewPanel() string {
 				Foreground(lipgloss.Color("#8E8E8E")).
 				Bold(true).
 				Width(4).
-				Height(previewTileHeight).
+				Height(tileH).
 				AlignVertical(lipgloss.Center).
 				Render(fmt.Sprintf("+%d", len(targets)-1))
 			body = lipgloss.JoinHorizontal(lipgloss.Top, body, " ", more)

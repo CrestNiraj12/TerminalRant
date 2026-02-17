@@ -111,6 +111,10 @@ type ProfileLoadedMsg struct {
 	Err       error
 }
 
+type EditProfileMsg struct {
+	UseInline bool
+}
+
 // EditRantMsg is sent when the user selects 'Edit' from the action menu.
 type EditRantMsg struct {
 	Rant      domain.Rant

@@ -46,6 +46,8 @@ func (s *accountService) CurrentProfile(_ context.Context) (app.Profile, error) 
 		Acct           string `json:"acct"`
 		DisplayName    string `json:"display_name"`
 		Note           string `json:"note"`
+		Avatar         string `json:"avatar"`
+		AvatarStatic   string `json:"avatar_static"`
 		StatusesCount  int    `json:"statuses_count"`
 		FollowersCount int    `json:"followers_count"`
 		FollowingCount int    `json:"following_count"`
@@ -60,6 +62,7 @@ func (s *accountService) CurrentProfile(_ context.Context) (app.Profile, error) 
 		Username:    sanitizeForTerminal(acct.Acct),
 		DisplayName: sanitizeForTerminal(acct.DisplayName),
 		Bio:         stripHTML(acct.Note),
+		AvatarURL:   sanitizeForTerminal(firstNonEmpty(acct.AvatarStatic, acct.Avatar)),
 		PostsCount:  acct.StatusesCount,
 		Followers:   acct.FollowersCount,
 		Following:   acct.FollowingCount,
@@ -155,6 +158,8 @@ func (s *accountService) ProfileByID(_ context.Context, accountID string) (app.P
 		Acct           string `json:"acct"`
 		DisplayName    string `json:"display_name"`
 		Note           string `json:"note"`
+		Avatar         string `json:"avatar"`
+		AvatarStatic   string `json:"avatar_static"`
 		StatusesCount  int    `json:"statuses_count"`
 		FollowersCount int    `json:"followers_count"`
 		FollowingCount int    `json:"following_count"`
@@ -167,10 +172,20 @@ func (s *accountService) ProfileByID(_ context.Context, accountID string) (app.P
 		Username:    sanitizeForTerminal(acct.Acct),
 		DisplayName: sanitizeForTerminal(acct.DisplayName),
 		Bio:         stripHTML(acct.Note),
+		AvatarURL:   sanitizeForTerminal(firstNonEmpty(acct.AvatarStatic, acct.Avatar)),
 		PostsCount:  acct.StatusesCount,
 		Followers:   acct.FollowersCount,
 		Following:   acct.FollowingCount,
 	}, nil
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (s *accountService) PostsByAccount(_ context.Context, accountID string, limit int, maxID string) ([]domain.Rant, error) {

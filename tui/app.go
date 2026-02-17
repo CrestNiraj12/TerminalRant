@@ -46,6 +46,9 @@ type App struct {
 	keys        common.KeyMap
 	status      string // Transient status message (e.g. "Rant posted!")
 	confirmQuit bool
+	profileEditInline bool
+	profileEditName   string
+	profileEditBio    string
 }
 
 // NewApp creates the root model with all dependencies wired.
@@ -78,8 +81,9 @@ type accountIDMsg struct {
 }
 
 type profileLoadedMsg struct {
-	Profile app.Profile
-	Err     error
+	Profile   app.Profile
+	UseInline bool
+	Err       error
 }
 
 type profileEditorDoneMsg struct {
@@ -121,7 +125,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When feed is in a modal/input state (e.g. hashtag input), let feed handle all keys.
 		if a.active == feedView && !a.feed.IsDialogOpen() {
 			if key.Matches(msg, a.keys.EditProfile) {
-				return a, a.loadProfileForEdit()
+				return a, a.loadProfileForEdit(false)
+			}
+			if msg.String() == "V" {
+				return a, a.loadProfileForEdit(true)
 			}
 
 			if key.Matches(msg, a.keys.NewEditor) {
@@ -157,6 +164,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.compose = compose.NewEditorWithContent(a.deps.Post, a.deps.Editor, a.deps.Hashtag, msg.Rant.ID, content, true, false, "", "")
 		}
 		return a, a.compose.Init()
+
+	case feed.EditProfileMsg:
+		return a, a.loadProfileForEdit(msg.UseInline)
 
 	case feed.ReplyRantMsg:
 		a.active = composeView
@@ -285,6 +295,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.status = "Profile error: " + msg.Err.Error()
 			return a, nil
 		}
+		a.profileEditName = strings.TrimSpace(msg.Profile.DisplayName)
+		a.profileEditBio = strings.TrimSpace(msg.Profile.Bio)
+		if msg.UseInline {
+			a.active = composeView
+			a.status = ""
+			a.profileEditInline = true
+			a.compose = compose.NewInlineWithContent(
+				a.deps.Post,
+				a.deps.Hashtag,
+				"profile-edit",
+				formatProfileDraft(msg.Profile),
+				true,
+				false,
+				"",
+				"",
+			)
+			return a, a.compose.Init()
+		}
 		cmd, tmpPath, err := a.deps.Editor.Cmd(formatProfileDraft(msg.Profile), "")
 		if err != nil {
 			a.status = "Editor error: " + err.Error()
@@ -308,6 +336,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		displayName, bio, ok := parseProfileDraft(content)
 		if !ok {
 			a.status = "Invalid profile format. Keep 'Display Name:' and 'Bio:' sections."
+			return a, nil
+		}
+		if strings.TrimSpace(displayName) == a.profileEditName && strings.TrimSpace(bio) == a.profileEditBio {
+			a.status = "Profile edit cancelled."
 			return a, nil
 		}
 		return a, func() tea.Msg {
@@ -346,6 +378,32 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 
 	case compose.DoneMsg:
+		if a.profileEditInline {
+			a.active = feedView
+			a.profileEditInline = false
+			a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{ForceReset: false})
+			if msg.Err != nil {
+				a.status = "Error: " + msg.Err.Error()
+				return a, nil
+			}
+			if strings.TrimSpace(msg.Content) == "" {
+				a.status = "Profile edit cancelled."
+				return a, nil
+			}
+			displayName, bio, ok := parseProfileDraft(msg.Content)
+			if !ok {
+				a.status = "Invalid profile format. Keep 'Display Name:' and 'Bio:' sections."
+				return a, nil
+			}
+			if strings.TrimSpace(displayName) == a.profileEditName && strings.TrimSpace(bio) == a.profileEditBio {
+				a.status = "Profile edit cancelled."
+				return a, nil
+			}
+			return a, func() tea.Msg {
+				err := a.deps.Account.UpdateProfile(context.Background(), displayName, bio)
+				return profileSaveResultMsg{Err: err}
+			}
+		}
 		a.active = feedView
 		a.feed, _ = a.feed.Update(feed.ResetFeedStateMsg{ForceReset: false})
 		if msg.Err != nil {
@@ -440,10 +498,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func (a App) loadProfileForEdit() tea.Cmd {
+func (a App) loadProfileForEdit(useInline bool) tea.Cmd {
 	return func() tea.Msg {
 		profile, err := a.deps.Account.CurrentProfile(context.Background())
-		return profileLoadedMsg{Profile: profile, Err: err}
+		return profileLoadedMsg{Profile: profile, UseInline: useInline, Err: err}
 	}
 }
 

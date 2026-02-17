@@ -34,6 +34,16 @@ func (m Model) handleKeyMsg(msg tea.Msg) (Model, tea.Cmd) {
 				m.profileCursor = 0
 				m.profileStart = 0
 				return m, nil
+			case key.Matches(msg, m.keys.EditProfile):
+				if m.profileIsOwn && !m.profileLoading {
+					return m, func() tea.Msg { return EditProfileMsg{UseInline: false} }
+				}
+				return m, nil
+			case msg.String() == "V":
+				if m.profileIsOwn && !m.profileLoading {
+					return m, func() tea.Msg { return EditProfileMsg{UseInline: true} }
+				}
+				return m, nil
 			case msg.String() == "H":
 				// H: go to feed home.
 				m.showProfile = false

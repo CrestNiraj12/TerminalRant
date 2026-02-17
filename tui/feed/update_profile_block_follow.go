@@ -55,7 +55,10 @@ func (m Model) handleProfileBlockFollowMsg(msg tea.Msg) (Model, tea.Cmd) {
 				_ = following
 			}
 		}
-		return m, m.fetchRelationshipsForRants(msg.Posts)
+		return m, tea.Batch(
+			m.fetchRelationshipsForRants(msg.Posts),
+			m.ensureProfileAvatarPreviewCmd(),
+		)
 
 	case FollowToggleResultMsg:
 		m.confirmFollow = false

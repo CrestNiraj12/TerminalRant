@@ -178,7 +178,7 @@ func (m Model) renderFeedList(visibleIndices []int, cardWidth, bodyWidth int, sh
 	panel := m.renderSelectedMediaPreviewPanel()
 	previewPane := clipLines(panel, viewHeight)
 	previewPane = lipgloss.NewStyle().
-		Width(previewPaneWidth).
+		Width(m.currentPreviewPaneWidth()).
 		MaxHeight(viewHeight).
 		Render(previewPane)
 	return lipgloss.JoinHorizontal(lipgloss.Top, listPane, "  ", previewPane)
@@ -312,7 +312,7 @@ func (m Model) feedCardWidths(reservePreviewColumn bool) (cardWidth int, bodyWid
 	// listPane = gutter + spacer + cards (+ optional preview pane)
 	available := m.width - 4 // gutter + spacer + a little safety
 	if reservePreviewColumn {
-		available -= previewPaneWidth + 2 // preview width + gap
+		available = m.currentPostPaneWidth()
 	}
 	if available < 44 {
 		available = 44

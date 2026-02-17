@@ -6,9 +6,11 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/CrestNiraj12/terminalrant/app"
 	"github.com/CrestNiraj12/terminalrant/domain"
 )
 
@@ -241,13 +243,28 @@ func (m Model) fetchProfile(accountID string) tea.Cmd {
 	acct := m.account
 	accountID = strings.TrimSpace(accountID)
 	return func() tea.Msg {
-		profile, err := acct.ProfileByID(context.Background(), accountID)
-		if err != nil {
-			return ProfileLoadedMsg{AccountID: accountID, Err: err}
+		var (
+			profile app.Profile
+			posts   []domain.Rant
+			perr    error
+			serr    error
+		)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			profile, perr = acct.ProfileByID(context.Background(), accountID)
+		}()
+		go func() {
+			defer wg.Done()
+			posts, serr = acct.PostsByAccount(context.Background(), accountID, defaultLimit, "")
+		}()
+		wg.Wait()
+		if perr != nil {
+			return ProfileLoadedMsg{AccountID: accountID, Err: perr}
 		}
-		posts, err := acct.PostsByAccount(context.Background(), accountID, defaultLimit, "")
-		if err != nil {
-			return ProfileLoadedMsg{AccountID: accountID, Err: err}
+		if serr != nil {
+			return ProfileLoadedMsg{AccountID: accountID, Err: serr}
 		}
 		return ProfileLoadedMsg{
 			AccountID: accountID,
